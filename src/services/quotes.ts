@@ -314,6 +314,45 @@ async function fetchWithRetry(
   throw lastErr instanceof Error ? lastErr : new Error(`${opts.label || 'fetch'} 失败`)
 }
 
+/* ---------- Static hosting / CORS (GitHub Pages has no Vite proxy) ---------- */
+
+function isElectronRuntime(): boolean {
+  return Boolean(typeof window !== 'undefined' && (window as Window & { stockWorkstation?: { isElectron?: boolean } }).stockWorkstation?.isElectron)
+}
+
+/**
+ * Build candidate URLs for a quote API call.
+ * - DEV: Vite `/api/*` proxies (reliable).
+ * - Electron: direct HTTPS (no browser CORS).
+ * - Static Pages / plain browser: try direct, then a public CORS relay (best-effort;
+ *   providers still fall through to SQLite cache → mock).
+ */
+function quoteCandidateUrls(devProxyUrl: string, absoluteUrl: string): string[] {
+  if (import.meta.env.DEV) return [devProxyUrl]
+  if (isElectronRuntime()) return [absoluteUrl]
+  return [
+    absoluteUrl,
+    // Public CORS relay — rate-limited / may change; not a hard dependency
+    `https://corsproxy.io/?${encodeURIComponent(absoluteUrl)}`,
+  ]
+}
+
+async function fetchFirstOk(
+  urls: string[],
+  init: RequestInit = {},
+  opts: { retries?: number; timeoutMs?: number; label?: string } = {},
+): Promise<Response> {
+  let lastErr: unknown
+  for (const url of urls) {
+    try {
+      return await fetchWithRetry(url, init, { ...opts, retries: opts.retries ?? 1 })
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`${opts.label || 'fetch'} 失败`)
+}
+
 /* ---------- Provider health ---------- */
 
 type HealthInternal = {
@@ -363,17 +402,16 @@ export function getProviderHealth(): ProviderHealth[] {
   }))
 }
 
-function yahooChartUrl(yahooSymbol: string, range: string, interval: string) {
+function yahooChartUrls(yahooSymbol: string, range: string, interval: string): string[] {
   const path = `/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=${range}&interval=${interval}`
-  if (import.meta.env.DEV) return `/api/yahoo${path}`
-  return `https://query1.finance.yahoo.com${path}`
+  return quoteCandidateUrls(`/api/yahoo${path}`, `https://query1.finance.yahoo.com${path}`)
 }
 
 async function fetchYahooChart(yahooSymbol: string, range = '3mo', interval = '1d') {
-  const url = yahooChartUrl(yahooSymbol, range, interval)
+  const urls = yahooChartUrls(yahooSymbol, range, interval)
   const t0 = performance.now()
   try {
-    const res = await fetchWithRetry(url, { headers: { Accept: 'application/json' } }, { label: 'Yahoo', retries: 2 })
+    const res = await fetchFirstOk(urls, { headers: { Accept: 'application/json' } }, { label: 'Yahoo', retries: 1 })
     const json = await res.json()
     const result = json?.chart?.result?.[0]
     if (!result) throw new Error('Yahoo 无数据')
@@ -477,14 +515,12 @@ export const yahooProvider: QuoteProvider = {
   },
 }
 
-function eastmoneyUrl(path: string) {
-  if (import.meta.env.DEV) return `/api/eastmoney${path}`
-  return `https://push2.eastmoney.com${path}`
+function eastmoneyUrls(path: string): string[] {
+  return quoteCandidateUrls(`/api/eastmoney${path}`, `https://push2.eastmoney.com${path}`)
 }
 
-function eastmoneyHisUrl(path: string) {
-  if (import.meta.env.DEV) return `/api/eastmoney-his${path}`
-  return `https://push2his.eastmoney.com${path}`
+function eastmoneyHisUrls(path: string): string[] {
+  return quoteCandidateUrls(`/api/eastmoney-his${path}`, `https://push2his.eastmoney.com${path}`)
 }
 
 async function fetchEastmoneyBatch(symbols: string[]): Promise<Quote[]> {
@@ -503,10 +539,10 @@ async function fetchEastmoneyBatch(symbols: string[]): Promise<Quote[]> {
   const path = `/api/qt/ulist.np/get?fltt=2&invt=2&secids=${encodeURIComponent(secids)}&fields=${fields}`
   const t0 = performance.now()
   try {
-    const res = await fetchWithRetry(
-      eastmoneyUrl(path),
-      { headers: { Accept: 'application/json', Referer: 'https://quote.eastmoney.com' } },
-      { label: '东财', retries: 2, timeoutMs: 9000 },
+    const res = await fetchFirstOk(
+      eastmoneyUrls(path),
+      { headers: { Accept: 'application/json' } },
+      { label: '东财', retries: 1, timeoutMs: 9000 },
     )
     const json = await res.json()
     const diffs: Array<Record<string, unknown>> = json?.data?.diff || []
@@ -587,10 +623,10 @@ async function fetchEastmoneyCandles(symbol: string, days = 90, period: ChartPer
     `&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58`
   const t0 = performance.now()
   try {
-    const res = await fetchWithRetry(
-      eastmoneyHisUrl(path),
-      { headers: { Accept: 'application/json', Referer: 'https://quote.eastmoney.com' } },
-      { label: '东财K线', retries: 2 },
+    const res = await fetchFirstOk(
+      eastmoneyHisUrls(path),
+      { headers: { Accept: 'application/json' } },
+      { label: '东财K线', retries: 1 },
     )
     const json = await res.json()
     const klines: string[] = json?.data?.klines || []
@@ -656,10 +692,9 @@ function persistQuotes(quotes: Quote[]) {
   }
 }
 
-function sinaUrl(list: string) {
+function sinaUrls(list: string): string[] {
   const path = `/list=${encodeURIComponent(list)}`
-  if (import.meta.env.DEV) return `/api/sina${path}`
-  return `https://hq.sinajs.cn${path}`
+  return quoteCandidateUrls(`/api/sina${path}`, `https://hq.sinajs.cn${path}`)
 }
 
 async function fetchSinaQuotes(symbols: string[]): Promise<Quote[]> {
@@ -675,10 +710,10 @@ async function fetchSinaQuotes(symbols: string[]): Promise<Quote[]> {
   const list = pairs.map((p) => p.code).join(',')
   const t0 = performance.now()
   try {
-    const res = await fetchWithRetry(
-      sinaUrl(list),
-      { headers: { Referer: 'https://finance.sina.com.cn' } },
-      { label: '新浪', retries: 2, timeoutMs: 9000 },
+    const res = await fetchFirstOk(
+      sinaUrls(list),
+      {},
+      { label: '新浪', retries: 1, timeoutMs: 9000 },
     )
     const buf = await res.arrayBuffer()
     let body: string
@@ -1026,8 +1061,11 @@ async function tryFetchEastmoneyHeadlines(): Promise<BriefItem[]> {
     // 公开板块榜（尽力而为，失败回退样例）
     const newsPath =
       '/api/qt/clist/get?pn=1&pz=8&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3,f62'
-    const url = import.meta.env.DEV ? `/api/eastmoney${newsPath}` : `https://push2.eastmoney.com${newsPath}`
-    const res = await fetchWithRetry(url, { headers: { Accept: 'application/json' } }, { retries: 1, timeoutMs: 6000 })
+    const res = await fetchFirstOk(
+      eastmoneyUrls(newsPath),
+      { headers: { Accept: 'application/json' } },
+      { retries: 0, timeoutMs: 6000, label: '东财快讯' },
+    )
     const json = await res.json()
     const diffs: Array<Record<string, unknown>> = json?.data?.diff || []
     if (!Array.isArray(diffs) || diffs.length === 0) return []

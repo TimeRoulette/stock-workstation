@@ -246,7 +246,8 @@ function seedIfEmpty() {
 export async function initDb(): Promise<void> {
   if (db) return
   const SQL = await initSqlJs({
-    locateFile: (file) => `/${file}`,
+    // BASE_URL is './' (or /REPO/) so wasm works on GitHub project Pages
+    locateFile: (file) => `${import.meta.env.BASE_URL}${file}`,
   })
 
   const saved = localStorage.getItem(DB_KEY)

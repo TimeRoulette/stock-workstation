@@ -21,6 +21,26 @@ npm run dev
 
 按 `?` 查看键盘快捷键（`1`–`5` 切页，`N` 聚焦添加，`R` 刷新行情）。
 
+
+## 在线演示（GitHub Pages）
+
+部署后访问（把 `USER` / `REPO` 换成你的账号与仓库名）：
+
+**https://USER.github.io/REPO/**
+
+### 启用 Pages（Actions 源）
+
+1. 仓库 **Settings → Pages**
+2. **Build and deployment → Source** 选 **GitHub Actions**
+3. 推送到 `main` 后，工作流 `.github/workflows/pages.yml` 会自动 `npm ci` → `npm run build` → 上传 `dist/` 并部署
+4. 也可在 **Actions** 里手动跑 **Deploy GitHub Pages**
+
+本地构建产物在 `dist/`（`base` 默认为 `./`，适配项目页路径）。若需要绝对前缀：
+
+```bash
+VITE_BASE=/REPO/ npm run build
+```
+
 ## 功能一览（v0.5）
 
 | 能力 | 说明 |
@@ -56,7 +76,15 @@ npm run electron:build:win    # / mac / linux
 | 缓存 | 上次成功价，TTL ≈30 分钟 |
 | 模拟 | 随机游走，保证 UI 不空白 |
 
-默认回退：**东财 → 新浪 → Yahoo → 缓存 → 模拟**。开发态 Vite 代理：`/api/yahoo`、`/api/eastmoney`、`/api/sina` 等。
+默认回退：**东财 → 新浪 → Yahoo → 缓存 → 模拟**。
+
+| 运行环境 | 行情如何到达浏览器 |
+|----------|-------------------|
+| `npm run dev` | Vite 开发代理 `/api/yahoo`、`/api/eastmoney`、`/api/sina` 等（绕过 CORS） |
+| Electron 桌面包 | 主进程/渲染直连 HTTPS，无浏览器 CORS 限制 |
+| **GitHub Pages 静态站** | **没有** Vite 代理。客户端先直连公开源，再尝试公共 CORS 中继（`corsproxy.io`，尽力而为、可能限流）；仍失败则用 **SQLite 缓存 → 本地模拟**，保证 UI 可用 |
+
+> Pages 上的「真实行情」依赖源站 CORS 或公共中继是否可用；断网或中继不可用时会自动落到缓存/模拟，这是预期行为，不是构建失败。
 
 ## 进阶
 
@@ -87,6 +115,7 @@ symbol,name,side,qty,price,fee,ts
 
 ```
 stock-workstation/
+├── .github/workflows/ # Pages 构建与部署
 ├── electron/
 ├── src/
 │   ├── pages/         # 盯盘 / 模拟 / 日报 / 复盘 / 设置
@@ -94,6 +123,7 @@ stock-workstation/
 │   ├── services/      # db.ts、quotes.ts
 │   ├── utils/         # 安全数值格式化
 │   └── styles/
+├── dist/              # npm run build 输出（Pages 产物）
 └── README.md
 ```
 
@@ -117,6 +147,7 @@ stock-workstation/
 ## 限制与声明
 
 - 公开行情常延迟；分钟线依赖源是否返回数据  
+- GitHub Pages 为纯静态托管：无服务端代理；真源可能因 CORS/中继不可用而回退到缓存或模拟  
 - 多币种折算为示意汇率，**不是**实时外汇  
 - 价格提醒仅应用内 Toast，不做系统推送；免打扰仅抑制 Toast  
 - 现金重算以初始 ¥1,000,000 与成交费用为准，不含手动改账  

@@ -2,6 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+// Relative './' works for GitHub project pages (https://USER.github.io/REPO/).
+// Override with VITE_BASE=/REPO/ if you prefer an absolute project base.
+const base = process.env.VITE_BASE || './'
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -52,5 +56,5 @@ export default defineConfig({
   build: {
     outDir: 'dist',
   },
-  base: './',
+  base,
 })
