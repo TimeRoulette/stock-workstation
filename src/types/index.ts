@@ -1,8 +1,8 @@
 export type Market = 'SH' | 'SZ' | 'HK' | 'US'
 
-export type QuoteSource = 'eastmoney' | 'sina' | 'yahoo' | 'mock' | 'cache'
+export type QuoteSource = 'eastmoney' | 'sina' | 'ths' | 'yahoo' | 'mock' | 'cache'
 
-export type QuoteProviderMode = 'auto' | 'eastmoney' | 'yahoo' | 'mock'
+export type QuoteProviderMode = 'auto' | 'eastmoney' | 'ths' | 'yahoo' | 'mock'
 
 /** 图表周期：日/周/月 或 分时 1m/5m */
 export type ChartPeriod = '1m' | '5m' | '1d' | '1w' | '1M'

@@ -104,6 +104,8 @@ export function sourceBadgeLabel(source: QuoteSource): string {
       return '东财'
     case 'sina':
       return '新浪'
+    case 'ths':
+      return '同花顺'
     case 'yahoo':
       return 'Yahoo'
     case 'cache':
@@ -302,14 +304,20 @@ function chunkSymbols<T>(arr: T[], size = PROVIDER_BATCH_SIZE): T[][] {
 }
 
 /** 浏览器禁止改 UA/Referer；能设的尽量设。DEV 代理会补 Referer/UA。 */
-function providerHeaders(kind: 'eastmoney' | 'sina' | 'yahoo'): HeadersInit {
+function providerHeaders(kind: 'eastmoney' | 'sina' | 'ths' | 'yahoo' | 'rss' | 'json'): HeadersInit {
   if (kind === 'sina') {
+    return { Accept: '*/*', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' }
+  }
+  if (kind === 'ths') {
     return { Accept: '*/*', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' }
   }
   if (kind === 'eastmoney') {
     return { Accept: 'application/json', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' }
   }
-  return { Accept: 'application/json', 'Accept-Language': 'en-US,en;q=0.9' }
+  if (kind === 'rss') {
+    return { Accept: 'application/rss+xml, application/xml, text/xml, */*', 'Accept-Language': 'zh-CN,zh;q=0.9' }
+  }
+  return { Accept: 'application/json', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' }
 }
 
 async function fetchWithRetry(
@@ -399,9 +407,12 @@ type HealthInternal = {
 const healthMap: Record<string, HealthInternal> = {
   eastmoney: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
   sina: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
+  ths: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
   yahoo: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
   mock: { status: 'ok', latencyMs: 0, lastOkAt: new Date().toISOString(), lastError: null, message: '本地始终可用', lastFailAt: null },
   cache: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '取决于是否有缓存', lastFailAt: null },
+  people: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '日报源 · 尚未探测', lastFailAt: null },
+  yangshi: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '日报源 · 尚未探测', lastFailAt: null },
 }
 
 function markHealth(id: string, ok: boolean, latencyMs: number, err?: string) {
@@ -440,9 +451,12 @@ export function getProviderHealth(): ProviderHealth[] {
   const labels: Record<string, string> = {
     eastmoney: '东方财富',
     sina: '新浪财经',
+    ths: '同花顺',
     yahoo: 'Yahoo Finance',
     mock: '本地模拟',
     cache: 'SQLite 缓存',
+    people: '人民日报 · 财经 RSS',
+    yangshi: '央视财经（样式→央视）',
   }
   return Object.keys(labels).map((id) => {
     const h = healthMap[id]
@@ -930,6 +944,130 @@ export const sinaProvider: QuoteProvider = {
   },
 }
 
+/** 同花顺 web 公开 realhead（CORS *，A 股 hs_ 代码；无密钥） */
+export function toThsRealheadCode(symbol: string): string | null {
+  const { symbol: s, market } = normalizeSymbol(symbol)
+  if (market === 'SH') return `hs_${s.replace('.SH', '')}`
+  if (market === 'SZ') return `hs_${s.replace('.SZ', '')}`
+  return null
+}
+
+function thsUrls(code: string): string[] {
+  const path = `/v2/realhead/${encodeURIComponent(code)}/last.js`
+  return quoteCandidateUrls(`/api/ths${path}`, `https://d.10jqka.com.cn${path}`)
+}
+
+function parseThsJsonp(body: string): Record<string, unknown> | null {
+  const start = body.indexOf('(')
+  const end = body.lastIndexOf(')')
+  if (start < 0 || end <= start) return null
+  try {
+    const json = JSON.parse(body.slice(start + 1, end)) as { items?: Record<string, unknown> }
+    return json?.items || null
+  } catch {
+    return null
+  }
+}
+
+function thsAsOf(raw: unknown): string {
+  const s = String(raw || '')
+  const m = s.match(/(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})/)
+  if (m) {
+    const iso = new Date(`${m[1]}T${m[2]}+08:00`).toISOString()
+    if (!Number.isNaN(Date.parse(iso))) return iso
+  }
+  return new Date().toISOString()
+}
+
+async function fetchOneThsQuote(symbol: string): Promise<Quote> {
+  const norm = normalizeSymbol(symbol).symbol
+  const code = toThsRealheadCode(norm)
+  if (!code) throw new Error('同花顺仅支持 A 股')
+  const t0 = performance.now()
+  try {
+    const res = await fetchFirstOk(
+      thsUrls(code),
+      { headers: providerHeaders('ths') },
+      { label: '同花顺', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
+    )
+    const body = await res.text()
+    const items = parseThsJsonp(body)
+    if (!items) throw new Error('同花顺解析失败')
+    const price = Number(items['10'])
+    if (!Number.isFinite(price) || price <= 0) throw new Error('同花顺无效价格')
+    const prevClose = Number(items['6']) || price
+    const open = Number(items['7']) || price
+    const high = Number(items['8']) || price
+    const low = Number(items['9']) || price
+    const volume = Number(items['13']) || 0
+    const changePercent = Number(items['199112'])
+    const changeRaw = Number(items['264648'])
+    const change = Number.isFinite(changeRaw) ? changeRaw : price - prevClose
+    const pct = Number.isFinite(changePercent)
+      ? changePercent
+      : prevClose
+        ? (change / prevClose) * 100
+        : 0
+    const name = String(items['name'] || items['5'] || BASE_PRICES[norm]?.name || norm)
+    markHealth('ths', true, Math.round(performance.now() - t0))
+    return {
+      symbol: norm,
+      name,
+      price: +price.toFixed(4),
+      change: +change.toFixed(4),
+      changePercent: +pct.toFixed(2),
+      open: +open.toFixed(4),
+      high: +high.toFixed(4),
+      low: +low.toFixed(4),
+      prevClose: +prevClose.toFixed(4),
+      volume,
+      currency: currencyFor(norm),
+      asOf: thsAsOf(items['time']),
+      delayed: true,
+      source: 'ths',
+    }
+  } catch (e) {
+    markHealth('ths', false, Math.round(performance.now() - t0), e instanceof Error ? e.message : '同花顺失败')
+    throw e
+  }
+}
+
+async function fetchThsQuotes(symbols: string[]): Promise<Quote[]> {
+  const applicable = symbols.filter((s) => toThsRealheadCode(s))
+  if (applicable.length === 0) throw new Error('同花顺无适用标的')
+  const out: Quote[] = []
+  let lastErr: unknown
+  // 并行但限并发，避免一次性打爆
+  const chunks = chunkSymbols(applicable, 8)
+  for (const chunk of chunks) {
+    const parts = await Promise.all(
+      chunk.map(async (s) => {
+        try {
+          return await fetchOneThsQuote(s)
+        } catch (e) {
+          lastErr = e
+          return null
+        }
+      }),
+    )
+    for (const q of parts) if (q) out.push(q)
+  }
+  if (out.length === 0) throw lastErr instanceof Error ? lastErr : new Error('同花顺全部失败')
+  return out
+}
+
+export const thsProvider: QuoteProvider = {
+  id: 'ths',
+  label: '同花顺',
+  async fetchQuotes(symbols) {
+    return fetchThsQuotes(symbols)
+  },
+  async fetchCandles(_symbol, _days = 90, _period = '1d') {
+    throw new Error('同花顺本 provider 不提供 K 线（回退东财/Yahoo）')
+  },
+}
+
+
 export class QuoteService {
   private mode: QuoteProviderMode = 'auto'
 
@@ -945,18 +1083,21 @@ export class QuoteService {
   private chain(): QuoteProvider[] {
     const em = eastmoneyProvider
     const sn = sinaProvider
+    const th = thsProvider
     const yh = yahooProvider
     const mk = mockProvider
     switch (this.mode) {
       case 'mock':
         return [mk]
       case 'yahoo':
-        return [yh, sn, mk]
+        return [yh, sn, th, mk]
+      case 'ths':
+        return [th, em, sn, yh, mk]
       case 'eastmoney':
-        return [em, sn, yh, mk]
+        return [em, sn, th, yh, mk]
       case 'auto':
       default:
-        return [em, sn, yh, mk]
+        return [em, sn, th, yh, mk]
     }
   }
 
@@ -1009,6 +1150,15 @@ export class QuoteService {
           } catch {
             /* 立刻下一源 */
           }
+        } else if (provider.id === 'ths') {
+          const targets = pending.filter((s) => toThsRealheadCode(s))
+          if (targets.length === 0) continue
+          try {
+            const batch = await fetchThsQuotes(targets)
+            batch.forEach((q) => result.set(q.symbol, q))
+          } catch {
+            /* 立刻下一源 */
+          }
         }
       } catch {
         /* next provider */
@@ -1033,7 +1183,7 @@ export class QuoteService {
     for (const provider of this.liveProviders()) {
       try {
         if (provider.id === 'eastmoney' && !toEastmoneySecid(norm)) continue
-        if (provider.id === 'sina') continue
+        if (provider.id === 'sina' || provider.id === 'ths') continue
         const candles = await provider.fetchCandles(norm, days, period)
         if (candles.length > 0) return candles
       } catch {
@@ -1064,7 +1214,30 @@ export class QuoteService {
       })(),
       (async () => {
         try {
+          await fetchOneThsQuote(sampleA)
+        } catch {
+          /* */
+        }
+      })(),
+      (async () => {
+        try {
           await fetchOneYahooQuoteOnce(sampleUs)
+        } catch {
+          /* */
+        }
+      })(),
+      (async () => {
+        try {
+          const n = await tryFetchPeopleDaily()
+          if (n.length === 0) throw new Error('人民日报无条目')
+        } catch {
+          /* health marked inside */
+        }
+      })(),
+      (async () => {
+        try {
+          const n = await tryFetchYangshiFinance()
+          if (n.length === 0) throw new Error('央视财经无条目')
         } catch {
           /* */
         }
@@ -1093,7 +1266,7 @@ export class QuoteService {
     healthMap.mock.lastOkAt = new Date().toISOString()
     healthMap.mock.lastFailAt = null
     healthMap.mock.message = '本地始终可用'
-    const live = ['eastmoney', 'sina', 'yahoo']
+    const live = ['eastmoney', 'sina', 'ths', 'yahoo']
     const allDown = live.every((id) => healthMap[id]?.status === 'down')
     if (allDown) {
       healthMap.cache.message += ' · 真源均不可用，将优先缓存/模拟'
@@ -1103,8 +1276,9 @@ export class QuoteService {
 
   async activeSourceLabel(): Promise<string> {
     const labels: Record<string, string> = {
-      auto: '自动（东财 → 新浪 → Yahoo → 缓存 → 模拟）',
+      auto: '自动（东财 → 新浪 → 同花顺 → Yahoo → 缓存 → 模拟）',
       eastmoney: '东方财富优先',
+      ths: '同花顺优先',
       yahoo: 'Yahoo 优先',
       mock: '本地模拟',
     }
@@ -1203,7 +1377,7 @@ function sampleBrief(
       id: 's6',
       title: '数据说明：行情回退链',
       summary:
-        '默认优先东方财富，其次新浪，再 Yahoo；失败优先用 SQLite 缓存（含放宽 TTL），无缓存才模拟。公开源常延迟。',
+        '默认优先东方财富，其次新浪、同花顺，再 Yahoo；失败优先用 SQLite 缓存（含放宽 TTL），无缓存才模拟。公开源常延迟。',
       source: '工作台',
       category: 'tip',
       publishedAt: day,
@@ -1248,16 +1422,221 @@ async function tryFetchEastmoneyHeadlines(): Promise<BriefItem[]> {
   }
 }
 
+function stripHtml(s: string): string {
+  return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function briefTitleKey(title: string): string {
+  return title.replace(/\s+/g, '').replace(/[，。！？、：；""''【】\[\]()（）]/g, '').slice(0, 36)
+}
+
+function dedupeBriefItems(items: BriefItem[]): BriefItem[] {
+  const seen = new Set<string>()
+  const out: BriefItem[] = []
+  for (const it of items) {
+    const key = briefTitleKey(it.title)
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    out.push(it)
+  }
+  return out
+}
+
+function parseRssItems(xml: string, limit = 6): Array<{ title: string; summary: string; url?: string; publishedAt: string }> {
+  const items: Array<{ title: string; summary: string; url?: string; publishedAt: string }> = []
+  const blocks = xml.split(/<item[\s>]/i).slice(1)
+  for (const block of blocks) {
+    const chunk = block.split(/<\/item>/i)[0] || ''
+    const titleM = chunk.match(/<title[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/title>/i)
+    const descM = chunk.match(/<description[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/description>/i)
+    const linkM = chunk.match(/<link[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/link>/i)
+    const dateM = chunk.match(/<pubDate[^>]*>([^<]*)<\/pubDate>/i)
+    const title = stripHtml((titleM?.[1] || titleM?.[2] || '').trim())
+    if (!title) continue
+    const summary = stripHtml((descM?.[1] || descM?.[2] || '').trim()).slice(0, 160)
+    const url = (linkM?.[1] || linkM?.[2] || '').trim() || undefined
+    let publishedAt = new Date().toISOString().slice(0, 10)
+    if (dateM?.[1]) {
+      const d = new Date(dateM[1])
+      if (!Number.isNaN(d.getTime())) publishedAt = d.toISOString().slice(0, 10)
+    }
+    items.push({ title, summary: summary || title, url, publishedAt })
+    if (items.length >= limit) break
+  }
+  return items
+}
+
+/** 人民日报财经：官网 RSS；Pages 无 rss2json 公网转换（无密钥） */
+async function tryFetchPeopleDaily(): Promise<BriefItem[]> {
+  const t0 = performance.now()
+  const day = new Date().toISOString().slice(0, 10)
+  try {
+    // 1) DEV 代理 / Electron 直连 RSS
+    const rssCandidates = quoteCandidateUrls(
+      '/api/people-rss/rss/finance.xml',
+      'https://www.people.com.cn/rss/finance.xml',
+    )
+    // Pages：rss2json 有 CORS *，作为优先候选之一
+    const relay =
+      'https://api.rss2json.com/v1/api.json?rss_url=' +
+      encodeURIComponent('https://www.people.com.cn/rss/finance.xml')
+    let parsed: Array<{ title: string; summary: string; url?: string; publishedAt: string }> = []
+
+    // 先试 JSON 转换（浏览器 Pages 更稳）
+    try {
+      const res = await fetchWithRetry(
+        relay,
+        { headers: providerHeaders('json') },
+        { retries: 0, timeoutMs: 7000, label: '人民日报rss2json' },
+      )
+      const json = await res.json()
+      const arr: Array<Record<string, unknown>> = json?.items || []
+      if (Array.isArray(arr) && arr.length > 0) {
+        parsed = arr.slice(0, 6).map((it) => {
+          const pub = String(it.pubDate || '')
+          let publishedAt = day
+          const d = new Date(pub)
+          if (!Number.isNaN(d.getTime())) publishedAt = d.toISOString().slice(0, 10)
+          return {
+            title: stripHtml(String(it.title || '')),
+            summary: stripHtml(String(it.description || it.content || it.title || '')).slice(0, 160),
+            url: String(it.link || '') || undefined,
+            publishedAt,
+          }
+        })
+      }
+    } catch {
+      /* fall through to raw RSS */
+    }
+
+    if (parsed.length === 0) {
+      const res = await fetchFirstOk(
+        rssCandidates,
+        { headers: providerHeaders('rss') },
+        { retries: 0, timeoutMs: 7000, label: '人民日报RSS' },
+      )
+      const xml = await res.text()
+      parsed = parseRssItems(xml, 6)
+    }
+
+    parsed = parsed.filter((x) => x.title)
+    if (parsed.length === 0) throw new Error('人民日报无条目')
+    markHealth('people', true, Math.round(performance.now() - t0))
+    return parsed.map((it, i) => ({
+      id: `people-${i}-${briefTitleKey(it.title).slice(0, 12)}`,
+      title: it.title,
+      summary: it.summary || it.title,
+      source: '人民日报 · 财经',
+      category: 'news' as const,
+      publishedAt: it.publishedAt || day,
+      url: it.url,
+    }))
+  } catch (e) {
+    markHealth('people', false, Math.round(performance.now() - t0), e instanceof Error ? e.message : '人民日报失败')
+    return []
+  }
+}
+
+/**
+ * 「样式财经」经检索无独立公开站；同音最接近「央视财经」。
+ * 使用央视网 economy JSONP（无密钥）；浏览器用 script 标签绕过无 CORS。
+ */
+function loadJsonpFixedCallback(url: string, callbackName: string, timeoutMs = 7000): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined') {
+      reject(new Error('无 DOM，无法 JSONP'))
+      return
+    }
+    const w = window as unknown as Record<string, unknown>
+    const prev = w[callbackName]
+    const script = document.createElement('script')
+    let settled = false
+    const timer = window.setTimeout(() => cleanup(new Error(`${callbackName} JSONP 超时`)), timeoutMs)
+    function cleanup(err?: Error, data?: unknown) {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      script.remove()
+      if (prev !== undefined) w[callbackName] = prev
+      else delete w[callbackName]
+      if (err) reject(err)
+      else resolve(data)
+    }
+    w[callbackName] = (data: unknown) => cleanup(undefined, data)
+    script.onerror = () => cleanup(new Error(`${callbackName} JSONP 加载失败`))
+    script.src = url
+    document.head.appendChild(script)
+  })
+}
+
+async function tryFetchYangshiFinance(): Promise<BriefItem[]> {
+  const t0 = performance.now()
+  const day = new Date().toISOString().slice(0, 10)
+  try {
+    let list: Array<Record<string, unknown>> = []
+    // DEV：走代理拉 JSONP 文本再解析；Pages/Electron：script JSONP
+    if (import.meta.env.DEV) {
+      const res = await fetchWithRetry(
+        '/api/cctv-news/2019/07/gaiban/cmsdatainterface/page/economy_1.jsonp',
+        { headers: providerHeaders('json') },
+        { retries: 0, timeoutMs: 7000, label: '央视财经' },
+      )
+      const body = await res.text()
+      const start = body.indexOf('(')
+      const end = body.lastIndexOf(')')
+      if (start < 0 || end <= start) throw new Error('央视 JSONP 解析失败')
+      const json = JSON.parse(body.slice(start + 1, end)) as { data?: { list?: Array<Record<string, unknown>> } }
+      list = json?.data?.list || []
+    } else {
+      const data = (await loadJsonpFixedCallback(
+        'https://news.cctv.com/2019/07/gaiban/cmsdatainterface/page/economy_1.jsonp',
+        'economy',
+        7000,
+      )) as { data?: { list?: Array<Record<string, unknown>> } }
+      list = data?.data?.list || []
+    }
+    if (!Array.isArray(list) || list.length === 0) throw new Error('央视财经无条目')
+    markHealth('yangshi', true, Math.round(performance.now() - t0))
+    return list.slice(0, 6).map((row, i) => {
+      const title = stripHtml(String(row.title || ''))
+      const brief = stripHtml(String(row.brief || '')).slice(0, 160)
+      const url = String(row.url || '') || undefined
+      const focus = String(row.focus_date || '')
+      let publishedAt = day
+      if (focus) {
+        const d = new Date(focus.replace(/-/g, '/'))
+        if (!Number.isNaN(d.getTime())) publishedAt = d.toISOString().slice(0, 10)
+      }
+      return {
+        id: `yangshi-${i}-${briefTitleKey(title).slice(0, 12)}`,
+        title,
+        summary: brief || title,
+        source: '央视财经',
+        category: 'news' as const,
+        publishedAt,
+        url,
+      }
+    }).filter((x) => x.title)
+  } catch (e) {
+    markHealth('yangshi', false, Math.round(performance.now() - t0), e instanceof Error ? e.message : '央视财经失败')
+    return []
+  }
+}
+
 export const sampleBriefProvider: BriefProvider = {
-  id: 'sample+fetch',
+  id: 'people+yangshi+eastmoney',
   async fetchBrief(watchSymbols = [], holdings = []) {
-    const remote = await tryFetchEastmoneyHeadlines()
+    const [people, yangshi, east] = await Promise.all([
+      tryFetchPeopleDaily(),
+      tryFetchYangshiFinance(),
+      tryFetchEastmoneyHeadlines(),
+    ])
+    const remote = dedupeBriefItems([...people, ...yangshi, ...east])
     const sample = sampleBrief(watchSymbols, holdings)
-    if (remote.length === 0) return sample
-    // 持仓/自选样例置顶，再拼接远程头条
     const top = sample.filter((x) => x.category === 'holding' || x.id === 's1')
     const rest = sample.filter((x) => !(x.category === 'holding' || x.id === 's1'))
-    return [...top, ...remote, ...rest]
+    if (remote.length === 0) return sample
+    return dedupeBriefItems([...top, ...remote, ...rest])
   },
 }
 

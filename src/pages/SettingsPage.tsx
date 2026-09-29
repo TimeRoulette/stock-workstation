@@ -154,8 +154,116 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
               </table>
             )}
             <p className="muted" style={{ fontSize: 12, marginBottom: 0, marginTop: 8 }}>
-              进入本页会自动探测（真实轻量请求）。单源超时约 7s；失败立刻下一源。auto 对已知 down 源冷却约 3 分钟。缓存新鲜 TTL 30 分钟，可放宽至 24 小时后再 mock。
+              进入本页会自动探测（真实轻量请求）。单源超时约 7s；失败立刻下一源。auto 对已知 down 源冷却约 3 分钟。缓存新鲜 TTL 30 分钟，可放宽至 24 小时后再 mock。日报源（人民日报 / 央视财经）亦在此探测。
             </p>
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">源接入说明（核实后）</div>
+          <div className="panel-body">
+            <table className="data dense">
+              <thead>
+                <tr>
+                  <th>源</th>
+                  <th>类型</th>
+                  <th>状态</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>同花顺</td>
+                  <td>行情</td>
+                  <td>
+                    <span className="health-pill health-ok">已接</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    Web realhead JSONP（d.10jqka.com.cn，CORS *，无密钥）；A 股；入回退链
+                  </td>
+                </tr>
+                <tr>
+                  <td>人民日报</td>
+                  <td>日报</td>
+                  <td>
+                    <span className="health-pill health-ok">已接</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    人民网财经 RSS；Pages 经 rss2json 公网转换（无密钥）
+                  </td>
+                </tr>
+                <tr>
+                  <td>样式财经 → 央视财经</td>
+                  <td>日报</td>
+                  <td>
+                    <span className="health-pill health-ok">已接</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    未找到「样式财经」站；同音接央视网 economy JSONP（无密钥）
+                  </td>
+                </tr>
+                <tr>
+                  <td>同花顺期货通</td>
+                  <td>行情</td>
+                  <td>
+                    <span className="health-pill health-skipped">跳过</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    官方 REST 需 X-api-key；客户端协议需 Electron 本地桥
+                  </td>
+                </tr>
+                <tr>
+                  <td>通达信</td>
+                  <td>行情</td>
+                  <td>
+                    <span className="health-pill health-skipped">跳过</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    TCP 客户端协议，GitHub Pages 不可直连；需 Electron 本地桥
+                  </td>
+                </tr>
+                <tr>
+                  <td>指南针股票</td>
+                  <td>行情</td>
+                  <td>
+                    <span className="health-pill health-skipped">跳过</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    仅客户端/登录体系，无稳定无密钥公开 JSON
+                  </td>
+                </tr>
+                <tr>
+                  <td>华宝智投</td>
+                  <td>行情</td>
+                  <td>
+                    <span className="health-pill health-skipped">跳过</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    券商 App 条件单产品，无公开行情 API
+                  </td>
+                </tr>
+                <tr>
+                  <td>财联社</td>
+                  <td>资讯</td>
+                  <td>
+                    <span className="health-pill health-skipped">跳过</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    Web 电报接口需签名（errno 10012），不稳定且易失效
+                  </td>
+                </tr>
+                <tr>
+                  <td>开盘啦</td>
+                  <td>行情</td>
+                  <td>
+                    <span className="health-pill health-skipped">跳过</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    App 私有接口（DeviceID/签名），Pages 不可靠
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -169,8 +277,9 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
                 value={settings.quoteProvider}
                 onChange={(e) => saveProvider(e.target.value as QuoteProviderMode)}
               >
-                <option value="auto">自动（东财 → 新浪 → Yahoo → 缓存 → 模拟）</option>
+                <option value="auto">自动（东财 → 新浪 → 同花顺 → Yahoo → 缓存 → 模拟）</option>
                 <option value="eastmoney">东方财富优先</option>
+                <option value="ths">同花顺优先</option>
                 <option value="yahoo">Yahoo Finance 优先</option>
                 <option value="mock">仅本地模拟</option>
               </select>
@@ -349,7 +458,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.6.1 · 简单 UX，更深功能
+              <strong>股票工作台</strong> v0.6.2 · 简单 UX，更深功能
             </p>
             <p className="muted">
               运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}

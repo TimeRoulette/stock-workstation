@@ -60,7 +60,7 @@ export function BriefPage({ onOpenSymbol }: Props) {
       </header>
       <div className="page-body">
         <div className="tip-banner">
-          💡 持仓速览置顶；自选相关靠前。点代码跳转盯盘或模拟（持仓卡片默认进模拟）。
+          💡 持仓速览置顶；自选相关靠前。远程源：人民日报财经、央视财经（「样式财经」同音替代）、东财板块榜；已去重。点代码跳转盯盘或模拟。
         </div>
 
         {loading ? (
