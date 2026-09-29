@@ -28,7 +28,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
         {!collapsed && (
           <div className="brand-text">
             <h1>股票工作台</h1>
-            <p>v0.6 · 本地优先</p>
+            <p>v0.6.1 · 本地优先</p>
           </div>
         )}
         <button

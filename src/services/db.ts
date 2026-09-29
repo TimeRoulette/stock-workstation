@@ -22,8 +22,10 @@ import type {
 
 const DB_KEY = 'stock-workstation-db-v1'
 const STARTING_CASH = 1_000_000
-/** 行情缓存默认视为可离线使用的时长（毫秒）— 更长 TTL 供断网回退 */
+/** 行情缓存「新鲜」TTL：优先返回未过期缓存 */
 export const QUOTE_CACHE_TTL_MS = 30 * 60 * 1000
+/** 放宽 TTL：真源全失败时仍可用的过期缓存（标记 delayed / source=cache） */
+export const QUOTE_CACHE_STALE_TTL_MS = 24 * 60 * 60 * 1000
 
 let db: Database | null = null
 let saveTimer: ReturnType<typeof setTimeout> | null = null
@@ -588,17 +590,12 @@ export function cacheQuote(q: Quote) {
 }
 
 export function getCachedQuote(symbol: string, maxAgeMs = QUOTE_CACHE_TTL_MS): Quote | null {
-  return queryOne(
+  const row = queryOne(
     `SELECT symbol, name, price, change_val, change_percent, open_val, high, low, prev_close, volume, currency, as_of, source, updated_at
      FROM quote_cache WHERE symbol = ?`,
     [symbol.toUpperCase()],
-    (r) => {
-      const updatedAt = String(r[13] || '')
-      const age = updatedAt ? Date.now() - new Date(updatedAt).getTime() : Infinity
-      // 仍返回行情，但调用方可据 maxAge 决定是否优先使用；此处始终返回 last-quote 供离线
-      void maxAgeMs
-      void age
-      return {
+    (r) => ({
+      quote: {
         symbol: String(r[0]),
         name: String(r[1]),
         price: Number(r[2]),
@@ -613,9 +610,19 @@ export function getCachedQuote(symbol: string, maxAgeMs = QUOTE_CACHE_TTL_MS): Q
         asOf: String(r[11]),
         delayed: true,
         source: String(r[12]) as Quote['source'],
-      }
-    },
+      } satisfies Quote,
+      updatedAt: String(r[13] || ''),
+    }),
   )
+  if (!row) return null
+  const age = row.updatedAt ? Date.now() - new Date(row.updatedAt).getTime() : Infinity
+  if (!Number.isFinite(age) || age > maxAgeMs) return null
+  return row.quote
+}
+
+/** 任意年龄的缓存（仅当需要「有则返回，无则 mock」） */
+export function getCachedQuoteAny(symbol: string): Quote | null {
+  return getCachedQuote(symbol, Number.POSITIVE_INFINITY)
 }
 
 export function getCachedQuoteMeta(symbol: string): { updatedAt: string } | null {

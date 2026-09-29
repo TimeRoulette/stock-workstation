@@ -287,13 +287,38 @@ export const mockProvider: QuoteProvider = {
 
 /* ---------- fetch helpers: retry + timeout ---------- */
 
+/** 单次 provider 请求超时（更快失败切换） */
+const PROVIDER_TIMEOUT_MS = 7000
+/** 自选批量分片，避免单次 URL/响应过大 */
+const PROVIDER_BATCH_SIZE = 20
+/** auto 模式：已知 down 源短路冷却 */
+const DOWN_COOLDOWN_MS = 3 * 60 * 1000
+
+function chunkSymbols<T>(arr: T[], size = PROVIDER_BATCH_SIZE): T[][] {
+  if (arr.length === 0) return []
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
+/** 浏览器禁止改 UA/Referer；能设的尽量设。DEV 代理会补 Referer/UA。 */
+function providerHeaders(kind: 'eastmoney' | 'sina' | 'yahoo'): HeadersInit {
+  if (kind === 'sina') {
+    return { Accept: '*/*', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' }
+  }
+  if (kind === 'eastmoney') {
+    return { Accept: 'application/json', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' }
+  }
+  return { Accept: 'application/json', 'Accept-Language': 'en-US,en;q=0.9' }
+}
+
 async function fetchWithRetry(
   url: string,
   init: RequestInit = {},
   opts: { retries?: number; timeoutMs?: number; label?: string } = {},
 ): Promise<Response> {
-  const retries = opts.retries ?? 2
-  const timeoutMs = opts.timeoutMs ?? 8000
+  const retries = opts.retries ?? 1
+  const timeoutMs = opts.timeoutMs ?? PROVIDER_TIMEOUT_MS
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     const ctrl = new AbortController()
@@ -307,11 +332,15 @@ async function fetchWithRetry(
       clearTimeout(timer)
       lastErr = e
       if (attempt < retries) {
-        await new Promise((r) => setTimeout(r, 300 * (attempt + 1)))
+        await new Promise((r) => setTimeout(r, 200 * (attempt + 1)))
       }
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(`${opts.label || 'fetch'} 失败`)
+  const name = opts.label || 'fetch'
+  if (lastErr instanceof DOMException && lastErr.name === 'AbortError') {
+    throw new Error(`${name} 超时 ${timeoutMs}ms`)
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(`${name} 失败`)
 }
 
 /* ---------- Static hosting / CORS (GitHub Pages has no Vite proxy) ---------- */
@@ -343,9 +372,11 @@ async function fetchFirstOk(
   opts: { retries?: number; timeoutMs?: number; label?: string } = {},
 ): Promise<Response> {
   let lastErr: unknown
+  // 每个候选 URL：默认 0 次重试（更快切换下一 URL / 下一源）；调用方可覆盖
+  const retries = opts.retries ?? 0
   for (const url of urls) {
     try {
-      return await fetchWithRetry(url, init, { ...opts, retries: opts.retries ?? 1 })
+      return await fetchWithRetry(url, init, { ...opts, retries })
     } catch (e) {
       lastErr = e
     }
@@ -361,14 +392,16 @@ type HealthInternal = {
   lastOkAt: string | null
   lastError: string | null
   message: string
+  /** 最近一次失败时间戳（用于 auto 短路） */
+  lastFailAt: number | null
 }
 
 const healthMap: Record<string, HealthInternal> = {
-  eastmoney: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测' },
-  sina: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测' },
-  yahoo: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测' },
-  mock: { status: 'ok', latencyMs: 0, lastOkAt: new Date().toISOString(), lastError: null, message: '本地始终可用' },
-  cache: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '取决于是否有缓存' },
+  eastmoney: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
+  sina: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
+  yahoo: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
+  mock: { status: 'ok', latencyMs: 0, lastOkAt: new Date().toISOString(), lastError: null, message: '本地始终可用', lastFailAt: null },
+  cache: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '取决于是否有缓存', lastFailAt: null },
 }
 
 function markHealth(id: string, ok: boolean, latencyMs: number, err?: string) {
@@ -379,12 +412,28 @@ function markHealth(id: string, ok: boolean, latencyMs: number, err?: string) {
     h.status = latencyMs > 5000 ? 'degraded' : 'ok'
     h.lastOkAt = new Date().toISOString()
     h.lastError = null
-    h.message = ok ? `正常 · ${latencyMs}ms` : h.message
+    h.lastFailAt = null
+    h.message = `正常 · ${latencyMs}ms`
   } else {
     h.status = 'down'
     h.lastError = err || '失败'
+    h.lastFailAt = Date.now()
     h.message = err || '请求失败'
   }
+}
+
+/** auto：已知 down 且仍在冷却期内则跳过，加快落到下一源/缓存 */
+function isProviderCoolingDown(id: string): boolean {
+  const h = healthMap[id]
+  if (!h || h.status !== 'down' || h.lastFailAt == null) return false
+  return Date.now() - h.lastFailAt < DOWN_COOLDOWN_MS
+}
+
+function cooldownRemainSec(id: string): number {
+  const h = healthMap[id]
+  if (!h?.lastFailAt) return 0
+  const left = DOWN_COOLDOWN_MS - (Date.now() - h.lastFailAt)
+  return left > 0 ? Math.ceil(left / 1000) : 0
 }
 
 export function getProviderHealth(): ProviderHealth[] {
@@ -395,11 +444,19 @@ export function getProviderHealth(): ProviderHealth[] {
     mock: '本地模拟',
     cache: 'SQLite 缓存',
   }
-  return Object.keys(labels).map((id) => ({
-    id,
-    label: labels[id],
-    ...healthMap[id],
-  }))
+  return Object.keys(labels).map((id) => {
+    const h = healthMap[id]
+    const { lastFailAt: _lf, ...rest } = { id, label: labels[id], ...h }
+    void _lf
+    if (id !== 'mock' && id !== 'cache' && isProviderCoolingDown(id)) {
+      return {
+        ...rest,
+        // 保持 down/degraded 真相，附带 auto 短路提示
+        message: `${h.message} · auto 冷却 ${cooldownRemainSec(id)}s`,
+      }
+    }
+    return rest
+  })
 }
 
 function yahooChartUrls(yahooSymbol: string, range: string, interval: string): string[] {
@@ -411,7 +468,11 @@ async function fetchYahooChart(yahooSymbol: string, range = '3mo', interval = '1
   const urls = yahooChartUrls(yahooSymbol, range, interval)
   const t0 = performance.now()
   try {
-    const res = await fetchFirstOk(urls, { headers: { Accept: 'application/json' } }, { label: 'Yahoo', retries: 1 })
+    const res = await fetchFirstOk(
+      urls,
+      { headers: providerHeaders('yahoo') },
+      { label: 'Yahoo', retries: 1, timeoutMs: PROVIDER_TIMEOUT_MS },
+    )
     const json = await res.json()
     const result = json?.chart?.result?.[0]
     if (!result) throw new Error('Yahoo 无数据')
@@ -423,7 +484,21 @@ async function fetchYahooChart(yahooSymbol: string, range = '3mo', interval = '1
   }
 }
 
-async function fetchOneYahooQuote(symbol: string): Promise<Quote> {
+function yahooVolumeFromResult(result: { meta?: Record<string, unknown>; indicators?: { quote?: Array<Record<string, unknown>> } }): number {
+  const meta = result.meta || {}
+  const fromMeta = Number(meta.regularMarketVolume)
+  if (Number.isFinite(fromMeta) && fromMeta > 0) return fromMeta
+  const vols = result.indicators?.quote?.[0]?.volume
+  if (Array.isArray(vols)) {
+    for (let i = vols.length - 1; i >= 0; i--) {
+      const v = Number(vols[i])
+      if (Number.isFinite(v) && v > 0) return v
+    }
+  }
+  return Number.isFinite(fromMeta) ? fromMeta : 0
+}
+
+async function fetchOneYahooQuoteOnce(symbol: string): Promise<Quote> {
   const norm = normalizeSymbol(symbol).symbol
   const y = toYahooSymbol(norm)
   const result = await fetchYahooChart(y, '5d', '1d')
@@ -443,11 +518,25 @@ async function fetchOneYahooQuote(symbol: string): Promise<Quote> {
     high: Number(meta.regularMarketDayHigh ?? price),
     low: Number(meta.regularMarketDayLow ?? price),
     prevClose: +prevClose.toFixed(4),
-    volume: Number(meta.regularMarketVolume ?? 0),
+    volume: yahooVolumeFromResult(result),
     currency: meta.currency || currencyFor(norm),
     asOf: new Date((meta.regularMarketTime || Date.now() / 1000) * 1000).toISOString(),
     delayed: true,
     source: 'yahoo',
+  }
+}
+
+/** Yahoo 失败再重试 1 次（A/H 符号映射由 toYahooSymbol 保留） */
+async function fetchOneYahooQuote(symbol: string): Promise<Quote> {
+  try {
+    return await fetchOneYahooQuoteOnce(symbol)
+  } catch (first) {
+    await new Promise((r) => setTimeout(r, 350))
+    try {
+      return await fetchOneYahooQuoteOnce(symbol)
+    } catch {
+      throw first instanceof Error ? first : new Error('Yahoo 失败')
+    }
   }
 }
 
@@ -523,7 +612,7 @@ function eastmoneyHisUrls(path: string): string[] {
   return quoteCandidateUrls(`/api/eastmoney-his${path}`, `https://push2his.eastmoney.com${path}`)
 }
 
-async function fetchEastmoneyBatch(symbols: string[]): Promise<Quote[]> {
+async function fetchEastmoneyBatchOnce(symbols: string[]): Promise<Quote[]> {
   const pairs = symbols
     .map((s) => {
       const norm = normalizeSymbol(s).symbol
@@ -541,8 +630,8 @@ async function fetchEastmoneyBatch(symbols: string[]): Promise<Quote[]> {
   try {
     const res = await fetchFirstOk(
       eastmoneyUrls(path),
-      { headers: { Accept: 'application/json' } },
-      { label: '东财', retries: 1, timeoutMs: 9000 },
+      { headers: providerHeaders('eastmoney') },
+      { label: '东财', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
     )
     const json = await res.json()
     const diffs: Array<Record<string, unknown>> = json?.data?.diff || []
@@ -595,6 +684,27 @@ async function fetchEastmoneyBatch(symbols: string[]): Promise<Quote[]> {
   }
 }
 
+/** 按 ≤20 分片批量拉东财，单片失败不拖死整批 */
+async function fetchEastmoneyBatch(symbols: string[]): Promise<Quote[]> {
+  const applicable = symbols.filter((s) => toEastmoneySecid(s))
+  if (applicable.length === 0) return []
+  const chunks = chunkSymbols(applicable, PROVIDER_BATCH_SIZE)
+  const out: Quote[] = []
+  let lastErr: unknown
+  for (const chunk of chunks) {
+    try {
+      const part = await fetchEastmoneyBatchOnce(chunk)
+      out.push(...part)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  if (out.length === 0) {
+    throw lastErr instanceof Error ? lastErr : new Error('东财全部失败')
+  }
+  return out
+}
+
 function eastmoneyKlt(period: ChartPeriod): number {
   switch (period) {
     case '1m':
@@ -625,8 +735,8 @@ async function fetchEastmoneyCandles(symbol: string, days = 90, period: ChartPer
   try {
     const res = await fetchFirstOk(
       eastmoneyHisUrls(path),
-      { headers: { Accept: 'application/json' } },
-      { label: '东财K线', retries: 1 },
+      { headers: providerHeaders('eastmoney') },
+      { label: '东财K线', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
     )
     const json = await res.json()
     const klines: string[] = json?.data?.klines || []
@@ -668,14 +778,26 @@ export const eastmoneyProvider: QuoteProvider = {
   },
 }
 
+/**
+ * 失败回退：先新鲜缓存（TTL），再放宽过期缓存（STALE），都没有才返回 null → mock。
+ * 一律标记 source=cache、delayed=true。
+ */
 function quoteFromCache(symbol: string): Quote | null {
   try {
-    const cached = db.getCachedQuote(normalizeSymbol(symbol).symbol)
-    if (!cached) return null
-    healthMap.cache.status = 'ok'
-    healthMap.cache.lastOkAt = new Date().toISOString()
-    healthMap.cache.message = '已命中离线最后报价'
-    return { ...cached, source: 'cache' as QuoteSource }
+    const norm = normalizeSymbol(symbol).symbol
+    const fresh = db.getCachedQuote(norm, db.QUOTE_CACHE_TTL_MS)
+    const stale = fresh ? null : db.getCachedQuote(norm, db.QUOTE_CACHE_STALE_TTL_MS)
+    const any = fresh || stale || db.getCachedQuoteAny(norm)
+    if (!any) return null
+    const meta = db.getCachedQuoteMeta(norm)
+    const ageMin = meta ? Math.round((Date.now() - new Date(meta.updatedAt).getTime()) / 60000) : null
+    healthMap.cache.status = fresh ? 'ok' : 'degraded'
+    healthMap.cache.lastOkAt = meta?.updatedAt || new Date().toISOString()
+    healthMap.cache.lastError = null
+    healthMap.cache.message = fresh
+      ? `新鲜缓存${ageMin != null ? ` · ${ageMin} 分钟前` : ''}`
+      : `过期缓存（放宽 TTL）${ageMin != null ? ` · ${ageMin} 分钟前` : ''}`
+    return { ...any, delayed: true, source: 'cache' as QuoteSource }
   } catch {
     return null
   }
@@ -697,7 +819,7 @@ function sinaUrls(list: string): string[] {
   return quoteCandidateUrls(`/api/sina${path}`, `https://hq.sinajs.cn${path}`)
 }
 
-async function fetchSinaQuotes(symbols: string[]): Promise<Quote[]> {
+async function fetchSinaQuotesOnce(symbols: string[]): Promise<Quote[]> {
   const pairs = symbols
     .map((s) => {
       const norm = normalizeSymbol(s).symbol
@@ -712,8 +834,8 @@ async function fetchSinaQuotes(symbols: string[]): Promise<Quote[]> {
   try {
     const res = await fetchFirstOk(
       sinaUrls(list),
-      {},
-      { label: '新浪', retries: 1, timeoutMs: 9000 },
+      { headers: providerHeaders('sina') },
+      { label: '新浪', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
     )
     const buf = await res.arrayBuffer()
     let body: string
@@ -776,6 +898,27 @@ async function fetchSinaQuotes(symbols: string[]): Promise<Quote[]> {
   }
 }
 
+/** 按 ≤20 分片拉新浪 */
+async function fetchSinaQuotes(symbols: string[]): Promise<Quote[]> {
+  const applicable = symbols.filter((s) => toSinaListCode(s))
+  if (applicable.length === 0) throw new Error('新浪无适用标的')
+  const chunks = chunkSymbols(applicable, PROVIDER_BATCH_SIZE)
+  const out: Quote[] = []
+  let lastErr: unknown
+  for (const chunk of chunks) {
+    try {
+      const part = await fetchSinaQuotesOnce(chunk)
+      out.push(...part)
+    } catch (e) {
+      lastErr = e
+    }
+  }
+  if (out.length === 0) {
+    throw lastErr instanceof Error ? lastErr : new Error('新浪全部失败')
+  }
+  return out
+}
+
 export const sinaProvider: QuoteProvider = {
   id: 'sina',
   label: '新浪财经',
@@ -798,6 +941,7 @@ export class QuoteService {
     return this.mode
   }
 
+  /** 完整回退链（含 mock） */
   private chain(): QuoteProvider[] {
     const em = eastmoneyProvider
     const sn = sinaProvider
@@ -816,19 +960,25 @@ export class QuoteService {
     }
   }
 
+  /** 真源链：auto 时跳过冷却中的 down 源，更快落到下一源/缓存 */
+  private liveProviders(): QuoteProvider[] {
+    const live = this.chain().filter((p) => p.id !== 'mock')
+    if (this.mode !== 'auto') return live
+    const ready = live.filter((p) => !isProviderCoolingDown(p.id))
+    // 若全部冷却，仍尝试一次（避免长时间只吃缓存）；否则短路跳过
+    return ready.length > 0 ? ready : live
+  }
+
   async fetchQuotes(symbols: string[]): Promise<Quote[]> {
     if (symbols.length === 0) return []
     const norms = symbols.map((s) => normalizeSymbol(s).symbol)
     const unique = [...new Set(norms)]
     const result = new Map<string, Quote>()
 
-    for (const provider of this.chain()) {
+    // 东财失败立刻试新浪，再 Yahoo；记录 source；成功写入 cache
+    for (const provider of this.liveProviders()) {
       const pending = unique.filter((s) => !result.has(s))
       if (pending.length === 0) break
-      if (provider.id === 'mock') {
-        for (const s of pending) result.set(s, mockQuote(s))
-        break
-      }
       try {
         if (provider.id === 'yahoo') {
           await Promise.all(
@@ -837,23 +987,27 @@ export class QuoteService {
                 const q = await fetchOneYahooQuote(s)
                 result.set(s, q)
               } catch {
-                /* next */
+                /* next symbol / provider */
               }
             }),
           )
         } else if (provider.id === 'eastmoney') {
+          const targets = pending.filter((s) => toEastmoneySecid(s))
+          if (targets.length === 0) continue
           try {
-            const batch = await fetchEastmoneyBatch(pending.filter((s) => toEastmoneySecid(s)))
+            const batch = await fetchEastmoneyBatch(targets)
             batch.forEach((q) => result.set(q.symbol, q))
           } catch {
-            /* next */
+            /* 立刻下一源 */
           }
         } else if (provider.id === 'sina') {
+          const targets = pending.filter((s) => toSinaListCode(s))
+          if (targets.length === 0) continue
           try {
-            const batch = await fetchSinaQuotes(pending.filter((s) => toSinaListCode(s)))
+            const batch = await fetchSinaQuotes(targets)
             batch.forEach((q) => result.set(q.symbol, q))
           } catch {
-            /* next */
+            /* 立刻下一源 */
           }
         }
       } catch {
@@ -861,6 +1015,7 @@ export class QuoteService {
       }
     }
 
+    // 仍缺：优先缓存（含放宽 TTL），最后才 mock
     for (const s of unique) {
       if (result.has(s)) continue
       const cached = quoteFromCache(s)
@@ -875,15 +1030,14 @@ export class QuoteService {
 
   async fetchCandles(symbol: string, days = 90, period: ChartPeriod = '1d'): Promise<Candle[]> {
     const norm = normalizeSymbol(symbol).symbol
-    for (const provider of this.chain()) {
-      if (provider.id === 'mock') return mockCandles(norm, days, period)
+    for (const provider of this.liveProviders()) {
       try {
         if (provider.id === 'eastmoney' && !toEastmoneySecid(norm)) continue
         if (provider.id === 'sina') continue
         const candles = await provider.fetchCandles(norm, days, period)
         if (candles.length > 0) return candles
       } catch {
-        /* next */
+        /* 超时/失败立刻下一源 */
       }
     }
     return mockCandles(norm, days, period)
@@ -892,40 +1046,43 @@ export class QuoteService {
   async probeProviders(): Promise<ProviderHealth[]> {
     const sampleA = '600519.SH'
     const sampleUs = 'AAPL'
+    // 真实轻量请求探测（各源独立，带超时）
     const tasks: Array<Promise<void>> = [
       (async () => {
         try {
-          await fetchEastmoneyBatch([sampleA])
+          await fetchEastmoneyBatchOnce([sampleA])
         } catch {
           /* health already marked */
         }
       })(),
       (async () => {
         try {
-          await fetchSinaQuotes([sampleA])
+          await fetchSinaQuotesOnce([sampleA])
         } catch {
           /* */
         }
       })(),
       (async () => {
         try {
-          await fetchOneYahooQuote(sampleUs)
+          await fetchOneYahooQuoteOnce(sampleUs)
         } catch {
           /* */
         }
       })(),
     ]
     await Promise.all(tasks)
-    const cached = db.getCachedQuote(sampleA)
     const meta = db.getCachedQuoteMeta(sampleA)
-    if (cached && meta) {
+    const fresh = db.getCachedQuote(sampleA, db.QUOTE_CACHE_TTL_MS)
+    const any = fresh || db.getCachedQuoteAny(sampleA)
+    if (any && meta) {
       const ageMin = Math.round((Date.now() - new Date(meta.updatedAt).getTime()) / 60000)
-      healthMap.cache.status = ageMin <= 30 ? 'ok' : 'degraded'
+      healthMap.cache.status = fresh ? 'ok' : ageMin <= 24 * 60 ? 'degraded' : 'unknown'
       healthMap.cache.latencyMs = null
       healthMap.cache.lastOkAt = meta.updatedAt
       healthMap.cache.lastError = null
-      healthMap.cache.message =
-        ageMin <= 0 ? '有新鲜缓存' : `离线报价 · ${ageMin} 分钟前`
+      healthMap.cache.message = fresh
+        ? `新鲜缓存 · ${ageMin} 分钟前`
+        : `可放宽使用 · ${ageMin} 分钟前`
     } else {
       healthMap.cache.status = 'unknown'
       healthMap.cache.message = '暂无缓存（成功拉行情后写入）'
@@ -934,8 +1091,8 @@ export class QuoteService {
     healthMap.mock.status = 'ok'
     healthMap.mock.latencyMs = 0
     healthMap.mock.lastOkAt = new Date().toISOString()
+    healthMap.mock.lastFailAt = null
     healthMap.mock.message = '本地始终可用'
-    // 汇总：若真源全挂，提示会用缓存/模拟
     const live = ['eastmoney', 'sina', 'yahoo']
     const allDown = live.every((id) => healthMap[id]?.status === 'down')
     if (allDown) {
@@ -1046,7 +1203,7 @@ function sampleBrief(
       id: 's6',
       title: '数据说明：行情回退链',
       summary:
-        '默认优先东方财富，其次新浪，再 Yahoo，最后 SQLite 缓存/模拟。公开源常延迟；断网时显示上次好价。',
+        '默认优先东方财富，其次新浪，再 Yahoo；失败优先用 SQLite 缓存（含放宽 TTL），无缓存才模拟。公开源常延迟。',
       source: '工作台',
       category: 'tip',
       publishedAt: day,
@@ -1063,7 +1220,7 @@ async function tryFetchEastmoneyHeadlines(): Promise<BriefItem[]> {
       '/api/qt/clist/get?pn=1&pz=8&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3,f62'
     const res = await fetchFirstOk(
       eastmoneyUrls(newsPath),
-      { headers: { Accept: 'application/json' } },
+      { headers: providerHeaders('eastmoney') },
       { retries: 0, timeoutMs: 6000, label: '东财快讯' },
     )
     const json = await res.json()

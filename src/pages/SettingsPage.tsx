@@ -154,7 +154,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
               </table>
             )}
             <p className="muted" style={{ fontSize: 12, marginBottom: 0, marginTop: 8 }}>
-              进入本页会自动探测。东财/新浪带重试；缓存 TTL 约 30 分钟，断网仍可显示上次好价。
+              进入本页会自动探测（真实轻量请求）。单源超时约 7s；失败立刻下一源。auto 对已知 down 源冷却约 3 分钟。缓存新鲜 TTL 30 分钟，可放宽至 24 小时后再 mock。
             </p>
           </div>
         </div>
@@ -349,7 +349,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.6.0 · 简单 UX，更深功能
+              <strong>股票工作台</strong> v0.6.1 · 简单 UX，更深功能
             </p>
             <p className="muted">
               运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}
