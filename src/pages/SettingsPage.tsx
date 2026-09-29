@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Advanced } from '../components/Advanced'
 import * as db from '../services/db'
 import { getProviderHealth, quoteService } from '../services/quotes'
+import { getScreenerHealth, probeScreener } from '../services/screener'
 import { fmtDateTime } from '../utils/format'
 import type { AppSettings, ProviderHealth, QuoteProviderMode } from '../types'
 
@@ -15,6 +16,7 @@ interface Props {
 export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts }: Props) {
   const [msg, setMsg] = useState<string | null>(null)
   const [health, setHealth] = useState<ProviderHealth[]>([])
+  const [screenerHealth, setScreenerHealth] = useState<ProviderHealth | null>(null)
   const [probing, setProbing] = useState(false)
   const [clearTrades, setClearTrades] = useState(true)
   const [clearEquity, setClearEquity] = useState(true)
@@ -25,6 +27,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
 
   useEffect(() => {
     setHealth(getProviderHealth())
+    setScreenerHealth(getScreenerHealth())
     // 进入设置页自动轻量刷新缓存/模拟状态，并异步探测
     void probe(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -48,7 +51,9 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
     try {
       const h = await quoteService.probeProviders()
       setHealth(h)
-      if (!silent) setMsg('已探测各行情源健康状态')
+      const sh = await probeScreener()
+      setScreenerHealth(sh)
+      if (!silent) setMsg('已探测各行情源与选股榜健康状态')
     } finally {
       setProbing(false)
     }
@@ -134,7 +139,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
                   </tr>
                 </thead>
                 <tbody>
-                  {health.map((h) => (
+                  {[...health, ...(screenerHealth ? [screenerHealth] : [])].map((h) => (
                     <tr key={h.id} style={{ cursor: 'default' }}>
                       <td>{h.label}</td>
                       <td>
@@ -180,6 +185,16 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
                   </td>
                   <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
                     Web realhead JSONP（d.10jqka.com.cn，CORS *，无密钥）；A 股；入回退链
+                  </td>
+                </tr>
+                <tr>
+                  <td>东财涨跌幅榜</td>
+                  <td>选股</td>
+                  <td>
+                    <span className="health-pill health-ok">已接</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    push2delay/push2 clist（fid=f3）；A/港/美 Tab；失败回退示意数据
                   </td>
                 </tr>
                 <tr>

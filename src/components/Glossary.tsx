@@ -39,15 +39,44 @@ const VOLUME_TERMS: Array<{ term: string; def: string }> = [
   },
 ]
 
+const SCREENER_TERMS: Array<{ term: string; def: string }> = [
+  {
+    term: '涨跌幅榜',
+    def: '按当日涨跌幅排序的全市场排名。涨幅榜从高到低，跌幅榜从低到高；数据来自公开行情源，通常有延迟。',
+  },
+  {
+    term: '成交额/量',
+    def: '成交额为金额合计，成交量为股数/手数口径依源而定；榜单用于横向对比情绪强弱。',
+  },
+  {
+    term: '延迟行情',
+    def: '公开接口非券商 Level-2，可能延迟数分钟；仅供学习，实盘请以券商为准。',
+  },
+]
+
 interface Props {
-  kind: 'order' | 'chart' | 'volume'
+  kind: 'order' | 'chart' | 'volume' | 'screener'
   compact?: boolean
 }
 
 export function Glossary({ kind, compact }: Props) {
   const [open, setOpen] = useState(!compact)
-  const terms = kind === 'order' ? ORDER_TERMS : kind === 'volume' ? VOLUME_TERMS : CHART_TERMS
-  const title = kind === 'order' ? '下单术语' : kind === 'volume' ? '量能术语' : '图表术语'
+  const terms =
+    kind === 'order'
+      ? ORDER_TERMS
+      : kind === 'volume'
+        ? VOLUME_TERMS
+        : kind === 'screener'
+          ? SCREENER_TERMS
+          : CHART_TERMS
+  const title =
+    kind === 'order'
+      ? '下单术语'
+      : kind === 'volume'
+        ? '量能术语'
+        : kind === 'screener'
+          ? '选股术语'
+          : '图表术语'
 
   return (
     <div className={`glossary ${compact ? 'compact' : ''}`}>

@@ -194,6 +194,7 @@ export function VolumePage({ onToast, onAlertsChange, onFocusSymbol }: Props) {
                 点击表头排序
               </span>
             </div>
+            <div className="table-scroll">
             <table className="data dense">
               <thead>
                 <tr>
@@ -261,6 +262,7 @@ export function VolumePage({ onToast, onAlertsChange, onFocusSymbol }: Props) {
                 })}
               </tbody>
             </table>
+            </div>
           </div>
         )}
 

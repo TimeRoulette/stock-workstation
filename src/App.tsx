@@ -5,6 +5,7 @@ import { ShortcutsHint } from './components/ShortcutsHint'
 import { ToastHost } from './components/ToastHost'
 import { WatchlistPage } from './pages/WatchlistPage'
 import { VolumePage } from './pages/VolumePage'
+import { ScreenerPage } from './pages/ScreenerPage'
 import { PortfolioPage } from './pages/PortfolioPage'
 import { BriefPage } from './pages/BriefPage'
 import { JournalPage } from './pages/JournalPage'
@@ -16,10 +17,11 @@ import type { AppSettings, ToastItem } from './types'
 const PAGE_BY_KEY: Record<string, PageKey> = {
   '1': 'watchlist',
   '2': 'volume',
-  '3': 'portfolio',
-  '4': 'brief',
-  '5': 'journal',
-  '6': 'settings',
+  '3': 'screener',
+  '4': 'portfolio',
+  '5': 'brief',
+  '6': 'journal',
+  '7': 'settings',
 }
 
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -169,6 +171,15 @@ export default function App() {
           <VolumePage
             onToast={pushToast}
             onAlertsChange={refreshAlertCount}
+            onFocusSymbol={(sym) => {
+              setFocusSymbol(sym)
+              setPage('watchlist')
+            }}
+          />
+        )}
+        {page === 'screener' && (
+          <ScreenerPage
+            onToast={pushToast}
             onFocusSymbol={(sym) => {
               setFocusSymbol(sym)
               setPage('watchlist')
