@@ -121,7 +121,7 @@ export interface BriefItem {
   jumpTo?: 'watchlist' | 'portfolio'
 }
 
-export type AlertType = 'above' | 'below' | 'pct_change'
+export type AlertType = 'above' | 'below' | 'pct_change' | 'rvol_above'
 
 export interface PriceAlert {
   id: number
@@ -157,6 +157,10 @@ export interface AppSettings {
   muteStartHour: number
   /** 免打扰结束小时 0–23（可跨午夜） */
   muteEndHour: number
+  /** RVOL 均量回看天数（默认 20） */
+  volumeLookback: number
+  /** 新建「相对成交量≥」提醒的默认倍数（默认 2） */
+  defaultRvolAlert: number
 }
 
 export interface QuoteProvider {

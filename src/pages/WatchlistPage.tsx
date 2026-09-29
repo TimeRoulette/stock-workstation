@@ -14,6 +14,12 @@ import {
   quoteService,
   sourceBadgeLabel,
 } from '../services/quotes'
+import {
+  buildRvolMap,
+  classifyRvol,
+  rvolLevelClass,
+  scanWatchlistVolume,
+} from '../services/volumeMonitor'
 import { fmt, fmtPct, fmtDateTime, fmtTime, safeNum } from '../utils/format'
 import type {
   Candle,
@@ -47,6 +53,8 @@ interface Props {
   focusSymbol?: string | null
   /** 成交后跳转复盘并带草稿 */
   onAfterTrade?: (tradeId: number) => void
+  volumeLookback?: number
+  defaultRvolAlert?: number
 }
 
 export function WatchlistPage({
@@ -55,6 +63,8 @@ export function WatchlistPage({
   onAlertsChange,
   focusSymbol,
   onAfterTrade,
+  volumeLookback = 20,
+  defaultRvolAlert = 2,
 }: Props) {
   const [items, setItems] = useState<WatchlistItem[]>([])
   const [selected, setSelected] = useState<string | null>(null)
@@ -69,6 +79,7 @@ export function WatchlistPage({
   const [alerts, setAlerts] = useState<PriceAlert[]>([])
   const [alertType, setAlertType] = useState<PriceAlert['type']>('above')
   const [alertThreshold, setAlertThreshold] = useState('')
+  const [rvolBySymbol, setRvolBySymbol] = useState<Record<string, number | null>>({})
   const [confirmBuy, setConfirmBuy] = useState(false)
   const [candleNonce, setCandleNonce] = useState(0)
   const [compareMode, setCompareMode] = useState(false)
@@ -147,9 +158,14 @@ export function WatchlistPage({
     }
   }, [selected, period, candleNonce])
 
+  // 价格提醒：行情刷新时立即评估（带上已有 RVOL 缓存）
   useEffect(() => {
     if (Object.keys(quotes).length === 0) return
-    const fired = evaluateAlerts(quotes)
+    const rvolMap: Record<string, number> = {}
+    for (const [sym, rv] of Object.entries(rvolBySymbol)) {
+      if (rv != null && Number.isFinite(rv)) rvolMap[sym] = rv
+    }
+    const fired = evaluateAlerts(quotes, rvolMap)
     if (fired.length) {
       fired.forEach((f) => onToast?.({ message: f.message, type: 'alert' }))
       setAlerts(db.listAlerts())
@@ -157,6 +173,44 @@ export function WatchlistPage({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quotes])
+
+  // 自选变更或回看天数变化时扫描 RVOL（供列展示）；有 rvol 提醒时一并评估
+  useEffect(() => {
+    if (items.length === 0) {
+      setRvolBySymbol({})
+      return
+    }
+    let cancelled = false
+    scanWatchlistVolume(
+      items,
+      (sym, days, period) => quoteService.fetchCandles(sym, days, period),
+      volumeLookback,
+      quotes,
+      3,
+    )
+      .then((rows) => {
+        if (cancelled) return
+        const map: Record<string, number | null> = {}
+        for (const r of rows) map[r.symbol] = r.rvol
+        setRvolBySymbol(map)
+        const rvolMap = buildRvolMap(rows)
+        if (Object.keys(quotes).length && Object.keys(rvolMap).length) {
+          const more = evaluateAlerts(quotes, rvolMap)
+          if (more.length) {
+            more.forEach((f) => onToast?.({ message: f.message, type: 'alert' }))
+            setAlerts(db.listAlerts())
+            onAlertsChange?.()
+          }
+        }
+      })
+      .catch(() => {
+        /* ignore scan errors */
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, volumeLookback])
 
   const add = () => {
     const { symbol, market } = normalizeSymbol(symbolInput)
@@ -417,6 +471,7 @@ export function WatchlistPage({
                       <th>代码</th>
                       <th>最新</th>
                       <th>涨跌</th>
+                      <th>RVOL</th>
                       <th>标签</th>
                       <th></th>
                     </tr>
@@ -459,6 +514,18 @@ export function WatchlistPage({
                           </td>
                           <td className={`mono ${q ? (up ? 'up' : 'down') : ''}`}>
                             {q ? fmtPct(q.changePercent) : '—'}
+                          </td>
+                          <td>
+                            {(() => {
+                              const rv = rvolBySymbol[item.symbol]
+                              const level = classifyRvol(rv ?? null)
+                              if (rv == null) return <span className="muted">—</span>
+                              return (
+                                <span className={`rvol-badge compact ${rvolLevelClass(level)}`} title={`RVOL ${rv.toFixed(2)}×`}>
+                                  {rv.toFixed(1)}×
+                                </span>
+                              )
+                            })()}
                           </td>
                           <td onClick={(e) => e.stopPropagation()}>
                             <select
@@ -638,6 +705,15 @@ export function WatchlistPage({
               <button type="button" className="chip" disabled={!selected} onClick={() => applyAlertTemplate('pct5')}>
                 涨跌 ≥5%
               </button>
+              <button
+                type="button"
+                className="chip"
+                disabled={!selected}
+                onClick={() => addAlert('rvol_above', defaultRvolAlert)}
+                title="相对成交量达到默认倍数时提醒"
+              >
+                RVOL ≥{defaultRvolAlert}×
+              </button>
             </div>
             <Advanced title="高级 · 自定义阈值">
               <div className="toolbar" style={{ marginBottom: 10 }}>
@@ -649,11 +725,18 @@ export function WatchlistPage({
                   <option value="above">价格高于</option>
                   <option value="below">价格低于</option>
                   <option value="pct_change">涨跌幅≥%</option>
+                  <option value="rvol_above">相对成交量≥</option>
                 </select>
                 <input
                   className="input compact"
                   style={{ maxWidth: 120 }}
-                  placeholder={alertType === 'pct_change' ? '如 3' : '阈值'}
+                  placeholder={
+                    alertType === 'pct_change'
+                      ? '如 3'
+                      : alertType === 'rvol_above'
+                        ? `如 ${defaultRvolAlert}`
+                        : '阈值'
+                  }
                   value={alertThreshold}
                   onChange={(e) => setAlertThreshold(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && addAlert()}
@@ -697,6 +780,7 @@ export function WatchlistPage({
                         {a.type === 'above' && `≥ ${a.threshold}`}
                         {a.type === 'below' && `≤ ${a.threshold}`}
                         {a.type === 'pct_change' && `|涨跌|≥${a.threshold}%`}
+                        {a.type === 'rvol_above' && `RVOL≥${a.threshold}×`}
                       </td>
                       <td className="muted" style={{ fontSize: 12 }}>
                         {a.triggeredAt

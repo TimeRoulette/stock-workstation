@@ -16,15 +16,38 @@ const CHART_TERMS: Array<{ term: string; def: string }> = [
   { term: '1m/5m', def: '分钟线（分时附近）；依赖数据源是否提供日内数据。' },
 ]
 
+const VOLUME_TERMS: Array<{ term: string; def: string }> = [
+  {
+    term: 'RVOL',
+    def: '相对成交量 = 最新日线成交量 ÷ 近 N 日均量（不含当日）。默认 N=20；历史不足 5 根时标为不可用。',
+  },
+  {
+    term: '放量',
+    def: 'RVOL ≥ 1.5：今日量明显高于近期均量，常伴随突破或情绪升温。',
+  },
+  {
+    term: '爆量',
+    def: 'RVOL ≥ 3.5：极端放量，需警惕追高或主力异动；结合价格位置判断。',
+  },
+  {
+    term: '缩量 / 极致缩量',
+    def: 'RVOL < 0.8 / < 0.5：交投清淡，趋势可能休整或缺乏跟风。',
+  },
+  {
+    term: '较昨日',
+    def: '今日量 ÷ 昨日量，仅作短线对照，不参与 RVOL 分级。',
+  },
+]
+
 interface Props {
-  kind: 'order' | 'chart'
+  kind: 'order' | 'chart' | 'volume'
   compact?: boolean
 }
 
 export function Glossary({ kind, compact }: Props) {
   const [open, setOpen] = useState(!compact)
-  const terms = kind === 'order' ? ORDER_TERMS : CHART_TERMS
-  const title = kind === 'order' ? '下单术语' : '图表术语'
+  const terms = kind === 'order' ? ORDER_TERMS : kind === 'volume' ? VOLUME_TERMS : CHART_TERMS
+  const title = kind === 'order' ? '下单术语' : kind === 'volume' ? '量能术语' : '图表术语'
 
   return (
     <div className={`glossary ${compact ? 'compact' : ''}`}>

@@ -245,6 +245,51 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
         </div>
 
         <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">成交量监测</div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              RVOL = 今日量 / 近 N 日均量（不含当日）。不足 5 根历史时不计算 RVOL。
+            </p>
+            <div className="form-row">
+              <label>均量回看天数</label>
+              <select
+                className="select"
+                value={settings.volumeLookback}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  db.setSetting('volumeLookback', String(v))
+                  onChange({ ...settings, volumeLookback: v })
+                  setMsg('均量回看天数已保存')
+                }}
+              >
+                <option value={10}>10</option>
+                <option value={20}>20（默认）</option>
+                <option value={30}>30</option>
+                <option value={60}>60</option>
+              </select>
+            </div>
+            <div className="form-row">
+              <label>默认 RVOL 提醒</label>
+              <select
+                className="select"
+                value={settings.defaultRvolAlert}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  db.setSetting('defaultRvolAlert', String(v))
+                  onChange({ ...settings, defaultRvolAlert: v })
+                  setMsg('默认 RVOL 提醒阈值已保存')
+                }}
+              >
+                <option value={1.5}>1.5×（放量）</option>
+                <option value={2}>2.0×（默认）</option>
+                <option value={3}>3.0×</option>
+                <option value={3.5}>3.5×（爆量）</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginBottom: 16 }}>
           <div className="panel-header">学习与快捷键</div>
           <div className="panel-body">
             <div className="toolbar">
@@ -304,7 +349,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.5.0 · 简单 UX，更深功能
+              <strong>股票工作台</strong> v0.6.0 · 简单 UX，更深功能
             </p>
             <p className="muted">
               运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}

@@ -228,6 +228,8 @@ function seedIfEmpty() {
   if (!getSetting('coachDismissed')) setSetting('coachDismissed', '0')
   if (getSetting('muteStartHour') == null) setSetting('muteStartHour', '23')
   if (getSetting('muteEndHour') == null) setSetting('muteEndHour', '7')
+  if (getSetting('volumeLookback') == null) setSetting('volumeLookback', '20')
+  if (getSetting('defaultRvolAlert') == null) setSetting('defaultRvolAlert', '2')
 
   const snapCount = queryOne<{ c: number }>(
     'SELECT COUNT(*) FROM equity_snapshots',
@@ -278,6 +280,8 @@ export function getSettings(): AppSettings {
   const provider = (getSetting('quoteProvider') as QuoteProviderMode) || 'auto'
   const muteStart = Number(getSetting('muteStartHour') ?? 23)
   const muteEnd = Number(getSetting('muteEndHour') ?? 7)
+  const volLb = Number(getSetting('volumeLookback') ?? 20)
+  const defRvol = Number(getSetting('defaultRvolAlert') ?? 2)
   return {
     quoteProvider: provider,
     refreshIntervalSec: Number(getSetting('refreshIntervalSec') || 30),
@@ -286,6 +290,8 @@ export function getSettings(): AppSettings {
     coachDismissed: getSetting('coachDismissed') === '1',
     muteStartHour: Number.isFinite(muteStart) ? Math.max(0, Math.min(23, Math.floor(muteStart))) : 23,
     muteEndHour: Number.isFinite(muteEnd) ? Math.max(0, Math.min(23, Math.floor(muteEnd))) : 7,
+    volumeLookback: Number.isFinite(volLb) ? Math.max(5, Math.min(120, Math.floor(volLb))) : 20,
+    defaultRvolAlert: Number.isFinite(defRvol) ? Math.max(0.5, Math.min(20, defRvol)) : 2,
   }
 }
 

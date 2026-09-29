@@ -1,9 +1,10 @@
 import { useState } from 'react'
 
-export type PageKey = 'watchlist' | 'portfolio' | 'brief' | 'journal' | 'settings'
+export type PageKey = 'watchlist' | 'volume' | 'portfolio' | 'brief' | 'journal' | 'settings'
 
 const NAV: Array<{ key: PageKey; label: string; icon: string; hint: string }> = [
   { key: 'watchlist', label: '盯盘', icon: '◎', hint: '自选 · K线 · 提醒' },
+  { key: 'volume', label: '量监', icon: '▦', hint: 'RVOL · 放量' },
   { key: 'portfolio', label: '模拟', icon: '▤', hint: '纸上交易 · CSV' },
   { key: 'brief', label: '日报', icon: '☰', hint: '简报 · 持仓关联' },
   { key: 'journal', label: '复盘', icon: '✎', hint: '交易笔记' },
@@ -27,7 +28,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
         {!collapsed && (
           <div className="brand-text">
             <h1>股票工作台</h1>
-            <p>v0.5 · 本地优先</p>
+            <p>v0.6 · 本地优先</p>
           </div>
         )}
         <button

@@ -4,6 +4,7 @@ import { Sidebar, type PageKey } from './components/Sidebar'
 import { ShortcutsHint } from './components/ShortcutsHint'
 import { ToastHost } from './components/ToastHost'
 import { WatchlistPage } from './pages/WatchlistPage'
+import { VolumePage } from './pages/VolumePage'
 import { PortfolioPage } from './pages/PortfolioPage'
 import { BriefPage } from './pages/BriefPage'
 import { JournalPage } from './pages/JournalPage'
@@ -14,10 +15,11 @@ import type { AppSettings, ToastItem } from './types'
 
 const PAGE_BY_KEY: Record<string, PageKey> = {
   '1': 'watchlist',
-  '2': 'portfolio',
-  '3': 'brief',
-  '4': 'journal',
-  '5': 'settings',
+  '2': 'volume',
+  '3': 'portfolio',
+  '4': 'brief',
+  '5': 'journal',
+  '6': 'settings',
 }
 
 function isTypingTarget(el: EventTarget | null): boolean {
@@ -38,6 +40,8 @@ export default function App() {
     coachDismissed: false,
     muteStartHour: 23,
     muteEndHour: 7,
+    volumeLookback: 20,
+    defaultRvolAlert: 2,
   })
   const [bootError, setBootError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -157,6 +161,18 @@ export default function App() {
             onToast={pushToast}
             onAlertsChange={refreshAlertCount}
             focusSymbol={focusSymbol}
+            volumeLookback={settings.volumeLookback}
+            defaultRvolAlert={settings.defaultRvolAlert}
+          />
+        )}
+        {page === 'volume' && (
+          <VolumePage
+            onToast={pushToast}
+            onAlertsChange={refreshAlertCount}
+            onFocusSymbol={(sym) => {
+              setFocusSymbol(sym)
+              setPage('watchlist')
+            }}
           />
         )}
         {page === 'portfolio' && (
