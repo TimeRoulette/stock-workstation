@@ -194,7 +194,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
                     <span className="health-pill health-ok">已接</span>
                   </td>
                   <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
-                    push2delay/push2 clist（fid=f3）；A/港/美 Tab；失败回退示意数据
+                    clist pn/pz 分页至前200；行业/概念板块榜；成分股龙头/中军；失败回退示意
                   </td>
                 </tr>
                 <tr>

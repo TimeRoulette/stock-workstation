@@ -24,6 +24,18 @@ const PAGE_BY_KEY: Record<string, PageKey> = {
   '7': 'settings',
 }
 
+const PAGE_LABEL: Record<PageKey, string> = {
+  watchlist: '盯盘',
+  volume: '量监',
+  screener: '选股',
+  portfolio: '模拟',
+  brief: '日报',
+  journal: '复盘',
+  settings: '设置',
+}
+
+const HISTORY_MAX = 20
+
 function isTypingTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
   const tag = el.tagName
@@ -34,6 +46,7 @@ function isTypingTarget(el: EventTarget | null): boolean {
 export default function App() {
   const [ready, setReady] = useState(false)
   const [page, setPage] = useState<PageKey>('watchlist')
+  const [history, setHistory] = useState<PageKey[]>([])
   const [settings, setSettings] = useState<AppSettings>({
     quoteProvider: 'auto',
     refreshIntervalSec: 30,
@@ -69,6 +82,27 @@ export default function App() {
     }, 6000)
   }, [])
 
+  /** 导航：push 当前页到历史栈；底部 Tab / 侧栏 / 快捷键共用，不破坏 Tab 高亮 */
+  const navigate = useCallback((next: PageKey) => {
+    setPage((prev) => {
+      if (prev === next) return prev
+      setHistory((h) => [...h.slice(-(HISTORY_MAX - 1)), prev])
+      return next
+    })
+  }, [])
+
+  const goBack = useCallback(() => {
+    setHistory((h) => {
+      if (h.length === 0) return h
+      const prev = h[h.length - 1]
+      setPage(prev)
+      return h.slice(0, -1)
+    })
+  }, [])
+
+  const canGoBack = history.length > 0
+  const backLabel = canGoBack ? PAGE_LABEL[history[history.length - 1]] : ''
+
   useEffect(() => {
     db.initDb()
       .then(() => {
@@ -102,15 +136,19 @@ export default function App() {
         return
       }
       if (e.key === 'Escape') {
+        if (canGoBack) {
+          goBack()
+          return
+        }
         setShowShortcuts(false)
         return
       }
       if (PAGE_BY_KEY[e.key]) {
-        setPage(PAGE_BY_KEY[e.key])
+        navigate(PAGE_BY_KEY[e.key])
         return
       }
       if (e.key === 'n' || e.key === 'N') {
-        setPage('watchlist')
+        navigate('watchlist')
         setTimeout(() => window.dispatchEvent(new Event('sw:focus-add')), 50)
         return
       }
@@ -121,7 +159,7 @@ export default function App() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showCoach, showShortcuts])
+  }, [showCoach, showShortcuts, canGoBack, goBack, navigate])
 
   const dismissCoach = () => {
     db.setSetting('coachDismissed', '1')
@@ -152,11 +190,18 @@ export default function App() {
     <div className="app-shell">
       <Sidebar
         current={page}
-        onNavigate={setPage}
+        onNavigate={navigate}
         alertCount={alertCount}
         onShowShortcuts={() => setShowShortcuts(true)}
       />
       <main className="main">
+        {canGoBack && (
+          <div className="main-backbar">
+            <button type="button" className="btn back-btn touch-target" onClick={goBack} title={`返回${backLabel}`}>
+              ← 返回{backLabel ? ` ${backLabel}` : ''}
+            </button>
+          </div>
+        )}
         {page === 'watchlist' && (
           <WatchlistPage
             refreshSec={settings.refreshIntervalSec}
@@ -173,7 +218,7 @@ export default function App() {
             onAlertsChange={refreshAlertCount}
             onFocusSymbol={(sym) => {
               setFocusSymbol(sym)
-              setPage('watchlist')
+              navigate('watchlist')
             }}
           />
         )}
@@ -182,7 +227,7 @@ export default function App() {
             onToast={pushToast}
             onFocusSymbol={(sym) => {
               setFocusSymbol(sym)
-              setPage('watchlist')
+              navigate('watchlist')
             }}
           />
         )}
@@ -198,10 +243,10 @@ export default function App() {
             onOpenSymbol={(sym, target) => {
               if (target === 'portfolio') {
                 setPortfolioSymbol(sym)
-                setPage('portfolio')
+                navigate('portfolio')
               } else {
                 setFocusSymbol(sym)
-                setPage('watchlist')
+                navigate('watchlist')
               }
             }}
           />

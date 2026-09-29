@@ -69,7 +69,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
           {!collapsed && (
             <div className="brand-text">
               <h1>股票工作台</h1>
-              <p>v0.7.0 · 本地优先</p>
+              <p>v0.7.1 · 本地优先</p>
             </div>
           )}
           <button
@@ -132,7 +132,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
               <div className="brand-mark">股</div>
               <div className="brand-text">
                 <h1>股票工作台</h1>
-                <p>v0.7.0 · 本地优先</p>
+                <p>v0.7.1 · 本地优先</p>
               </div>
               <button
                 type="button"

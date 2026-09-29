@@ -1002,3 +1002,51 @@ table.data tr.selected { background: var(--accent-soft); }
   .mobile-tabbar .nav-tab-label { font-size: 9px; }
   .stat-row { grid-template-columns: 1fr 1fr; }
 }
+
+/* ---- v0.7.1 back bar · screener boards · role badges ---- */
+.main-backbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 22px 0;
+  flex-shrink: 0;
+}
+.back-btn {
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--accent);
+  border-radius: 8px;
+}
+.back-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.role-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.role-leader {
+  background: rgba(240, 113, 120, 0.22);
+  color: #f07178;
+}
+.role-mid {
+  background: rgba(91, 159, 212, 0.2);
+  color: #5b9fd4;
+}
+
+@media (max-width: 768px) {
+  .main-backbar {
+    padding: 6px 12px 0;
+  }
+  .back-btn {
+    min-height: 36px;
+  }
+}
