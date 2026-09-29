@@ -21,7 +21,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/yahoo/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
         },
       },
       '/api/eastmoney-delay': {
@@ -29,7 +29,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/eastmoney-delay/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
           Referer: 'https://quote.eastmoney.com/',
         },
       },
@@ -38,7 +38,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/eastmoney/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
           Referer: 'https://quote.eastmoney.com/',
         },
       },
@@ -47,7 +47,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/sina/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
           Referer: 'https://finance.sina.com.cn',
         },
       },
@@ -56,7 +56,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/eastmoney-his/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
           Referer: 'https://quote.eastmoney.com/',
         },
       },
@@ -65,7 +65,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/ths/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
           Referer: 'https://q.10jqka.com.cn/',
         },
       },
@@ -74,7 +74,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/people-rss/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
           Accept: 'application/rss+xml, application/xml, text/xml, */*',
         },
       },
@@ -83,7 +83,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/cctv-news/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
           Referer: 'https://finance.cctv.com/',
         },
       },
@@ -92,7 +92,7 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api\/wscn/, ''),
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.7.1)',
+          'User-Agent': 'Mozilla/5.0 (compatible; StockWorkstation/0.8.0)',
         },
       },
     },

@@ -17,7 +17,17 @@ import {
   type ScreenerRow,
   type ScreenerSort,
 } from '../services/screener'
-import { normalizeSymbol } from '../services/quotes'
+import {
+  clearTechCandleCache,
+  scanTechCandidates,
+  TECH_RULES_TEXT,
+  techConditionLabel,
+  type TechCombineMode,
+  type TechConditionId,
+  type TechScanHit,
+  type TechScanProgress,
+} from '../services/techScreener'
+import { normalizeSymbol, quoteService } from '../services/quotes'
 import { fmt, fmtPct, fmtTime, safeNum } from '../utils/format'
 import type { ToastItem } from '../types'
 
@@ -26,7 +36,7 @@ interface Props {
   onFocusSymbol?: (symbol: string) => void
 }
 
-type MainTab = 'stocks' | 'boards'
+type MainTab = 'stocks' | 'boards' | 'tech'
 
 function fmtVol(n: number): string {
   if (!Number.isFinite(n) || n <= 0) return '—'
@@ -81,6 +91,18 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
   const [asOf, setAsOf] = useState<string | null>(null)
   const [total, setTotal] = useState(0)
   const [watchSet, setWatchSet] = useState<Set<string>>(new Set())
+
+  // —— 技术筛选 ——
+  const [techConds, setTechConds] = useState<TechConditionId[]>(['macd_golden'])
+  const [techCombine, setTechCombine] = useState<TechCombineMode>('any')
+  const [macdLookback, setMacdLookback] = useState(5)
+  const [pressureWindow, setPressureWindow] = useState<20 | 60>(20)
+  const [techHits, setTechHits] = useState<TechScanHit[]>([])
+  const [techProgress, setTechProgress] = useState<TechScanProgress | null>(null)
+  const [techScanning, setTechScanning] = useState(false)
+  const [techError, setTechError] = useState<string | null>(null)
+  const [techMockSkipped, setTechMockSkipped] = useState(0)
+  const techAbort = useRef(0)
 
   const reloadWatch = useCallback(() => {
     try {
@@ -185,6 +207,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
   )
 
   const load = useCallback(async () => {
+    if (mainTab === 'tech') return
     if (mainTab === 'stocks') await loadStocks()
     else if (selectedBoard) await openBoard(selectedBoard)
     else await loadBoards()
@@ -194,10 +217,10 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
     reloadWatch()
   }, [reloadWatch])
 
-  // 主 Tab / 市场 / 板块类型切换：重置列表（loadBoards 会清详情）
+  // 主 Tab / 市场 / 板块类型切换：重置列表（loadBoards 会清详情）；技术 Tab 不自动扫
   useEffect(() => {
     if (mainTab === 'stocks') void loadStocks()
-    else void loadBoards()
+    else if (mainTab === 'boards') void loadBoards()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainTab, market, boardKind])
 
@@ -208,6 +231,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       skipFirstSort.current = false
       return
     }
+    if (mainTab === 'tech') return
     if (mainTab === 'stocks') void loadStocks()
     else if (selectedBoard) void openBoard(selectedBoard)
     else void loadBoards()
@@ -220,7 +244,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
     return () => window.removeEventListener('sw:refresh-quotes', onRefresh)
   }, [load])
 
-  const addWatch = (row: ScreenerRow | BoardConstituent) => {
+  const addWatch = (row: ScreenerRow | BoardConstituent | TechScanHit) => {
     const { symbol, market: mkt } = normalizeSymbol(row.symbol)
     try {
       if (watchSet.has(symbol)) {
@@ -238,16 +262,110 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
     }
   }
 
+  const toggleTechCond = (id: TechConditionId) => {
+    setTechConds((prev) => {
+      if (prev.includes(id)) {
+        if (prev.length === 1) return prev
+        return prev.filter((x) => x !== id)
+      }
+      return [...prev, id]
+    })
+  }
+
+  const runTechScan = useCallback(async () => {
+    const token = ++techAbort.current
+    setTechScanning(true)
+    setTechError(null)
+    setTechHits([])
+    setTechMockSkipped(0)
+    setTechProgress({ done: 0, total: 0, hits: 0 })
+    try {
+      // 先拉齐前 200 候选（分页）
+      const all: ScreenerRow[] = []
+      let page = 1
+      let hasMore = true
+      while (hasMore && page <= SCREENER_MAX_PAGES) {
+        const r = await fetchChangeRank(market, sort, { page, pageSize: SCREENER_PAGE_SIZE })
+        if (token !== techAbort.current) return
+        if (r.source === 'mock') {
+          setTechError(
+            r.error ||
+              '涨跌幅榜为示意数据，已停止技术扫描（示意榜不可伪装为真实技术命中）',
+          )
+          setTechScanning(false)
+          return
+        }
+        for (const row of r.rows) {
+          if (!all.some((x) => x.symbol === row.symbol)) all.push(row)
+        }
+        hasMore = r.hasMore && page < SCREENER_MAX_PAGES
+        page += 1
+      }
+      if (all.length === 0) {
+        setTechError('无候选股票')
+        setTechScanning(false)
+        return
+      }
+      setTechProgress({ done: 0, total: all.length, hits: 0 })
+      let mockSkip = 0
+      const hits = await scanTechCandidates(
+        all,
+        async (symbol, days) => {
+          const meta = await quoteService.fetchCandlesWithMeta(symbol, days, '1d')
+          if (meta.source === 'mock') mockSkip += 1
+          return { candles: meta.candles, source: meta.source }
+        },
+        {
+          conditions: techConds,
+          combine: techCombine,
+          macdLookback,
+          pressureWindow,
+          concurrency: 4,
+          timeoutMs: 10000,
+          onProgress: (p) => {
+            if (token !== techAbort.current) return
+            setTechProgress(p)
+          },
+        },
+      )
+      if (token !== techAbort.current) return
+      setTechMockSkipped(mockSkip)
+      setTechHits(hits)
+      setSource('eastmoney')
+      setAsOf(new Date().toISOString())
+      if (hits.length === 0) {
+        setTechError(
+          mockSkip > 0
+            ? `扫描完成：无真实命中（其中 ${mockSkip} 只因仅有示意 K 线已跳过，未计入命中）`
+            : '扫描完成：当前条件无命中（规则偏严或数据不足属正常）',
+        )
+      }
+    } catch (e) {
+      if (token !== techAbort.current) return
+      setTechError(e instanceof Error ? e.message : '技术扫描失败')
+    } finally {
+      if (token === techAbort.current) setTechScanning(false)
+    }
+  }, [macdLookback, market, pressureWindow, sort, techCombine, techConds])
+
   const subtitle = (() => {
     const parts: string[] = []
-    if (mainTab === 'stocks') parts.push('个股涨跌幅')
+    if (mainTab === 'tech') {
+      parts.push('技术条件')
+      if (techScanning && techProgress) {
+        parts.push(`${techProgress.done}/${techProgress.total}`)
+        parts.push(`命中 ${techProgress.hits}`)
+      } else if (techHits.length) parts.push(`命中 ${techHits.length}`)
+    } else if (mainTab === 'stocks') parts.push('个股涨跌幅')
     else if (selectedBoard) parts.push(`${selectedBoard.name} · 成分股`)
     else parts.push(boardKind === 'industry' ? '行业板块' : '概念板块')
     if (asOf) parts.push(fmtTime(asOf))
-    if (source === 'eastmoney') parts.push('东财公开榜')
-    else if (source === 'mock') parts.push('示意数据')
-    if (total > 0) parts.push(`全市场约 ${total}`)
-    if (loading) parts.push('加载中')
+    if (mainTab !== 'tech') {
+      if (source === 'eastmoney') parts.push('东财公开榜')
+      else if (source === 'mock') parts.push('示意数据')
+    }
+    if (total > 0 && mainTab !== 'tech') parts.push(`全市场约 ${total}`)
+    if (loading || techScanning) parts.push('加载中')
     return parts.join(' · ')
   })()
 
@@ -259,8 +377,22 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
           <p className="subtitle">{subtitle}</p>
         </div>
         <div className="toolbar">
-          <button type="button" className="btn primary" onClick={() => void load()} disabled={loading}>
-            {loading ? '刷新中…' : '刷新'}
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => {
+              if (mainTab === 'tech') void runTechScan()
+              else void load()
+            }}
+            disabled={loading || techScanning}
+          >
+            {mainTab === 'tech'
+              ? techScanning
+                ? '扫描中…'
+                : '开始扫描'
+              : loading
+                ? '刷新中…'
+                : '刷新'}
           </button>
         </div>
       </header>
@@ -268,7 +400,8 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       <div className="page-body">
         <div className="tip-banner">
           数据来自东方财富公开 list 接口，通常有延迟，仅供学习研究，不构成投资建议。个股榜可加载至前{' '}
-          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。
+          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。技术筛选在前{' '}
+          {SCREENER_MAX_ROWS} 候选上按需拉 K 线，示意数据不会计入命中。
         </div>
 
         <div className="toolbar screener-toolbar" style={{ marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
@@ -293,9 +426,19 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
             >
               板块榜
             </button>
+            <button
+              type="button"
+              className={mainTab === 'tech' ? 'active' : ''}
+              onClick={() => {
+                setMainTab('tech')
+                setSelectedBoard(null)
+              }}
+            >
+              技术筛选
+            </button>
           </div>
 
-          {mainTab === 'stocks' && (
+          {(mainTab === 'stocks' || mainTab === 'tech') && (
             <div className="seg-control" role="tablist" aria-label="市场">
               {MARKET_TABS.map((t) => (
                 <button
@@ -343,10 +486,199 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
           </div>
         </div>
 
-        {error && <div className="state-banner error">{error}</div>}
+        {error && mainTab !== 'tech' && <div className="state-banner error">{error}</div>}
+        {techError && mainTab === 'tech' && (
+          <div className={`state-banner ${techHits.length ? 'info' : 'error'}`}>{techError}</div>
+        )}
 
-        {/* —— 板块详情 —— */}
-        {mainTab === 'boards' && selectedBoard ? (
+        {/* —— 技术筛选 —— */}
+        {mainTab === 'tech' ? (
+          <>
+            <div className="panel tech-panel" style={{ marginBottom: 12, padding: 12 }}>
+              <div className="tech-rules" style={{ marginBottom: 10 }}>
+                <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                  勾选条件后点「开始扫描」。候选=当前市场涨跌幅榜前 {SCREENER_MAX_ROWS}；并发 4、单票超时
+                  10s、K 线缓存约 10 分钟。示意 K 线跳过不计命中。
+                </div>
+                <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  {(['volume_wash', 'macd_golden', 'breakout_pullback'] as TechConditionId[]).map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`chip touch-target ${techConds.includes(id) ? 'chip-on' : ''}`}
+                      onClick={() => toggleTechCond(id)}
+                    >
+                      {techConditionLabel(id)}
+                    </button>
+                  ))}
+                </div>
+                <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <div className="seg-control" role="tablist" aria-label="组合">
+                    <button
+                      type="button"
+                      className={techCombine === 'any' ? 'active' : ''}
+                      onClick={() => setTechCombine('any')}
+                    >
+                      任一条件
+                    </button>
+                    <button
+                      type="button"
+                      className={techCombine === 'all' ? 'active' : ''}
+                      onClick={() => setTechCombine('all')}
+                    >
+                      全部条件
+                    </button>
+                  </div>
+                  <label className="muted" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    金叉回看
+                    <select
+                      value={macdLookback}
+                      onChange={(e) => setMacdLookback(Number(e.target.value))}
+                      disabled={techScanning}
+                    >
+                      {[3, 5, 8, 10].map((n) => (
+                        <option key={n} value={n}>
+                          {n} 日
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="muted" style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    压力窗口
+                    <select
+                      value={pressureWindow}
+                      onChange={(e) => setPressureWindow(Number(e.target.value) as 20 | 60)}
+                      disabled={techScanning}
+                    >
+                      <option value={20}>20 日</option>
+                      <option value={60}>60 日</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    disabled={techScanning}
+                    onClick={() => {
+                      clearTechCandleCache()
+                      onToast?.({ message: '已清空技术筛选 K 线缓存', type: 'info' })
+                    }}
+                  >
+                    清缓存
+                  </button>
+                </div>
+                <details className="tech-rule-details">
+                  <summary>查看规则阈值</summary>
+                  <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: 'var(--text-muted)' }}>
+                    <li>{TECH_RULES_TEXT.volume_wash}</li>
+                    <li>{TECH_RULES_TEXT.macd_golden}</li>
+                    <li>{TECH_RULES_TEXT.breakout_pullback}</li>
+                  </ul>
+                </details>
+              </div>
+              {techScanning && techProgress && (
+                <div className="tech-progress">
+                  <div className="tech-progress-bar">
+                    <div
+                      style={{
+                        width: `${techProgress.total ? (100 * techProgress.done) / techProgress.total : 0}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
+                    进度 {techProgress.done}/{techProgress.total}
+                    {techProgress.current ? ` · ${techProgress.current}` : ''} · 命中 {techProgress.hits}
+                    {techMockSkipped ? ` · 跳过示意 ${techMockSkipped}` : ''}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {!techScanning && techHits.length === 0 ? (
+              <div className="empty-state panel">
+                <h3>尚未扫描或无命中</h3>
+                <p>选择条件后点右上角「开始扫描」。数据不足或仅有示意 K 线时不会假命中。</p>
+              </div>
+            ) : techHits.length > 0 ? (
+              <div className="panel">
+                <div className="panel-header">
+                  <span>
+                    技术命中 · {techHits.length} 只
+                    {techMockSkipped ? `（另跳过示意 ${techMockSkipped}）` : ''}
+                  </span>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    仅真实 K 线 · 非投资建议
+                  </span>
+                </div>
+                <div className="table-scroll">
+                  <table className="data dense">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th>最新价</th>
+                        <th>涨跌幅</th>
+                        <th>数据</th>
+                        <th>命中依据</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {techHits.map((r, idx) => {
+                        const up = safeNum(r.changePercent) >= 0
+                        const inWatch = watchSet.has(r.symbol)
+                        return (
+                          <tr key={r.symbol}>
+                            <td className="mono muted">{idx + 1}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="link-symbol mono touch-target"
+                                onClick={() => onFocusSymbol?.(r.symbol)}
+                              >
+                                {r.symbol}
+                              </button>
+                            </td>
+                            <td className="muted" style={{ fontSize: 12 }}>
+                              {r.name}
+                            </td>
+                            <td className={`mono ${up ? 'up' : 'down'}`}>
+                              {fmt(r.price, safeNum(r.price) >= 100 ? 2 : 3)}
+                            </td>
+                            <td className={`mono ${up ? 'up' : 'down'}`}>{fmtPct(r.changePercent)}</td>
+                            <td>
+                              <span className="brief-status live">真实</span>
+                              <div className="muted mono" style={{ fontSize: 11 }}>
+                                {r.candleCount}根 · {r.lastBarDate || '—'}
+                              </div>
+                            </td>
+                            <td style={{ fontSize: 12, maxWidth: 280 }}>
+                              {r.hits.map((h) => (
+                                <div key={h.condition + h.label} style={{ marginBottom: 4 }}>
+                                  <strong>{h.label}</strong>：{h.detail}
+                                </div>
+                              ))}
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn btn-xs touch-target"
+                                disabled={inWatch}
+                                onClick={() => addWatch(r)}
+                              >
+                                {inWatch ? '已自选' : '+自选'}
+                              </button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </>
+        ) : mainTab === 'boards' && selectedBoard ? (
           <>
             <div className="toolbar" style={{ marginBottom: 10, gap: 8, flexWrap: 'wrap' }}>
               <button

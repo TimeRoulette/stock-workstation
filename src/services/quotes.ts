@@ -1,5 +1,4 @@
 import type {
-  BriefItem,
   Candle,
   ChartPeriod,
   Market,
@@ -10,6 +9,7 @@ import type {
   QuoteSource,
 } from '../types'
 import * as db from './db'
+import { getBriefHealth, probeBriefSources } from './briefNews'
 
 /** 内部统一代码：600519.SH / 000001.SZ / 00700.HK / AAPL */
 export function normalizeSymbol(raw: string): { symbol: string; market: Market } {
@@ -411,8 +411,6 @@ const healthMap: Record<string, HealthInternal> = {
   yahoo: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
   mock: { status: 'ok', latencyMs: 0, lastOkAt: new Date().toISOString(), lastError: null, message: '本地始终可用', lastFailAt: null },
   cache: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '取决于是否有缓存', lastFailAt: null },
-  people: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '日报源 · 尚未探测', lastFailAt: null },
-  yangshi: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '日报源 · 尚未探测', lastFailAt: null },
 }
 
 function markHealth(id: string, ok: boolean, latencyMs: number, err?: string) {
@@ -455,23 +453,22 @@ export function getProviderHealth(): ProviderHealth[] {
     yahoo: 'Yahoo Finance',
     mock: '本地模拟',
     cache: 'SQLite 缓存',
-    people: '人民日报 · 财经 RSS',
-    yangshi: '央视财经（样式→央视）',
   }
-  return Object.keys(labels).map((id) => {
+  const quoteHealth = Object.keys(labels).map((id) => {
     const h = healthMap[id]
     const { lastFailAt: _lf, ...rest } = { id, label: labels[id], ...h }
     void _lf
     if (id !== 'mock' && id !== 'cache' && isProviderCoolingDown(id)) {
       return {
         ...rest,
-        // 保持 down/degraded 真相，附带 auto 短路提示
         message: `${h.message} · auto 冷却 ${cooldownRemainSec(id)}s`,
       }
     }
     return rest
   })
+  return [...quoteHealth, ...getBriefHealth()]
 }
+
 
 function yahooChartUrls(yahooSymbol: string, range: string, interval: string): string[] {
   const path = `/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?range=${range}&interval=${interval}`
@@ -1179,18 +1176,33 @@ export class QuoteService {
   }
 
   async fetchCandles(symbol: string, days = 90, period: ChartPeriod = '1d'): Promise<Candle[]> {
+    const r = await this.fetchCandlesWithMeta(symbol, days, period)
+    return r.candles
+  }
+
+  /**
+   * 带源标记的 K 线：live=东财/Yahoo 等真源；mock=全部失败后的示意数据。
+   * 技术选股必须用此接口，禁止把 mock 当成真实命中。
+   */
+  async fetchCandlesWithMeta(
+    symbol: string,
+    days = 90,
+    period: ChartPeriod = '1d',
+  ): Promise<{ candles: Candle[]; source: 'live' | 'mock'; providerId?: string }> {
     const norm = normalizeSymbol(symbol).symbol
     for (const provider of this.liveProviders()) {
       try {
         if (provider.id === 'eastmoney' && !toEastmoneySecid(norm)) continue
         if (provider.id === 'sina' || provider.id === 'ths') continue
         const candles = await provider.fetchCandles(norm, days, period)
-        if (candles.length > 0) return candles
+        if (candles.length > 0) {
+          return { candles, source: 'live', providerId: provider.id }
+        }
       } catch {
         /* 超时/失败立刻下一源 */
       }
     }
-    return mockCandles(norm, days, period)
+    return { candles: mockCandles(norm, days, period), source: 'mock', providerId: 'mock' }
   }
 
   async probeProviders(): Promise<ProviderHealth[]> {
@@ -1228,16 +1240,7 @@ export class QuoteService {
       })(),
       (async () => {
         try {
-          const n = await tryFetchPeopleDaily()
-          if (n.length === 0) throw new Error('人民日报无条目')
-        } catch {
-          /* health marked inside */
-        }
-      })(),
-      (async () => {
-        try {
-          const n = await tryFetchYangshiFinance()
-          if (n.length === 0) throw new Error('央视财经无条目')
+          await probeBriefSources()
         } catch {
           /* */
         }
@@ -1288,367 +1291,15 @@ export class QuoteService {
 
 export const quoteService = new QuoteService()
 
-export interface BriefProvider {
-  id: string
-  fetchBrief(
-    watchSymbols?: string[],
-    holdings?: Array<{ symbol: string; name: string; qty: number }>,
-  ): Promise<BriefItem[]>
-}
-
-function sampleBrief(
-  watchSymbols: string[] = [],
-  holdings: Array<{ symbol: string; name: string; qty: number }> = [],
-): BriefItem[] {
-  const day = new Date().toISOString().slice(0, 10)
-  const focus = watchSymbols.slice(0, 3)
-  const focusLabel = focus.length ? focus.join('、') : '自选股'
-  const holdSyms = holdings.slice(0, 5).map((h) => h.symbol)
-  const holdLabel =
-    holdings.length === 0
-      ? ''
-      : holdings
-          .slice(0, 4)
-          .map((h) => `${h.name || h.symbol}×${h.qty}`)
-          .join('、') + (holdings.length > 4 ? '…' : '')
-  const items: BriefItem[] = []
-  if (holdings.length > 0) {
-    items.push({
-      id: 'hold-today',
-      title: `模拟持仓速览：${holdings.length} 只`,
-      summary: `当前纸上持仓：${holdLabel}。点代码可进「模拟」查看仓位；也可在盯盘看走势。`,
-      source: '工作台 · 持仓',
-      category: 'holding',
-      publishedAt: day,
-      symbols: holdSyms,
-      jumpTo: 'portfolio',
-    })
-  }
-  items.push(
-    {
-      id: 's1',
-      title: `自选关注：${focusLabel} 隔夜要点`,
-      summary:
-        focus.length > 0
-          ? `你的自选（${focusLabel}）今日可关注开盘缺口、成交量是否放大，以及板块联动。点击代码可回到盯盘。`
-          : '添加自选后，这里会生成与自选相关的简报要点。',
-      source: '工作台 · 自选',
-      category: 'trend',
-      publishedAt: day,
-      symbols: focus,
-      jumpTo: 'watchlist',
-    },
-    {
-      id: 's2',
-      title: '市场情绪偏谨慎，科技股分化',
-      summary: '美股科技龙头走势分化；港股互联网板块波动加大。关注财报季指引变化与汇率波动。',
-      source: '样例资讯',
-      category: 'news',
-      publishedAt: day,
-      symbols: ['AAPL', '00700.HK', 'TSLA'],
-    },
-    {
-      id: 's3',
-      title: 'A 股消费龙头估值仍处历史中枢',
-      summary: '以茅台为代表的白酒板块成交温和，短线或延续震荡，中长期看盈利稳定性。',
-      source: '样例趋势',
-      category: 'trend',
-      publishedAt: day,
-      symbols: ['600519.SH', '000858.SZ'],
-    },
-    {
-      id: 's4',
-      title: '学习提示：先定仓位再谈买卖',
-      summary: '模拟盘建议单票仓位不超过总资产 20%，用复盘笔记写下买卖逻辑。价格提醒可帮你盯破位。',
-      source: '工作台',
-      category: 'tip',
-      publishedAt: day,
-    },
-    {
-      id: 's5',
-      title: '港股通资金流向观察',
-      summary: '南向资金近期对互联网与创新药偏好有所回升，注意汇率与节假日流动性。',
-      source: '样例资讯',
-      category: 'news',
-      publishedAt: day,
-      symbols: ['00700.HK'],
-    },
-    {
-      id: 's6',
-      title: '数据说明：行情回退链',
-      summary:
-        '默认优先东方财富，其次新浪、同花顺，再 Yahoo；失败优先用 SQLite 缓存（含放宽 TTL），无缓存才模拟。公开源常延迟。',
-      source: '工作台',
-      category: 'tip',
-      publishedAt: day,
-    },
-  )
-  return items
-}
-
-/** 尝试拉取东财财经快讯（失败则静默回退样例） */
-async function tryFetchEastmoneyHeadlines(): Promise<BriefItem[]> {
-  try {
-    // 公开板块榜（尽力而为，失败回退样例）
-    const newsPath =
-      '/api/qt/clist/get?pn=1&pz=8&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3,f62'
-    const res = await fetchFirstOk(
-      eastmoneyUrls(newsPath),
-      { headers: providerHeaders('eastmoney') },
-      { retries: 0, timeoutMs: 6000, label: '东财快讯' },
-    )
-    const json = await res.json()
-    const diffs: Array<Record<string, unknown>> = json?.data?.diff || []
-    if (!Array.isArray(diffs) || diffs.length === 0) return []
-    const day = new Date().toISOString().slice(0, 10)
-    return diffs.slice(0, 6).map((row, i) => {
-      const code = String(row.f12 || '')
-      const name = String(row.f14 || code)
-      const pct = Number(row.f3) || 0
-      const symbol = code.length === 6 ? (code.startsWith('6') ? `${code}.SH` : `${code}.SZ`) : code
-      return {
-        id: `em-${i}-${code}`,
-        title: `${name}（${code}）板块异动 ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`,
-        summary: `东财公开榜摘录：${name} 相关题材今日涨跌幅 ${pct.toFixed(2)}%。仅供参考，非投资建议。`,
-        source: '东方财富 · 公开榜',
-        category: 'news' as const,
-        publishedAt: day,
-        symbols: symbol.includes('.') ? [symbol] : undefined,
-        url: undefined,
-      }
-    })
-  } catch {
-    return []
-  }
-}
-
-function stripHtml(s: string): string {
-  return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
-}
-
-function briefTitleKey(title: string): string {
-  return title.replace(/\s+/g, '').replace(/[，。！？、：；""''【】\[\]()（）]/g, '').slice(0, 36)
-}
-
-function dedupeBriefItems(items: BriefItem[]): BriefItem[] {
-  const seen = new Set<string>()
-  const out: BriefItem[] = []
-  for (const it of items) {
-    const key = briefTitleKey(it.title)
-    if (!key || seen.has(key)) continue
-    seen.add(key)
-    out.push(it)
-  }
-  return out
-}
-
-function parseRssItems(xml: string, limit = 6): Array<{ title: string; summary: string; url?: string; publishedAt: string }> {
-  const items: Array<{ title: string; summary: string; url?: string; publishedAt: string }> = []
-  const blocks = xml.split(/<item[\s>]/i).slice(1)
-  for (const block of blocks) {
-    const chunk = block.split(/<\/item>/i)[0] || ''
-    const titleM = chunk.match(/<title[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/title>/i)
-    const descM = chunk.match(/<description[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/description>/i)
-    const linkM = chunk.match(/<link[^>]*>(?:<!\[CDATA\[([\s\S]*?)\]\]>|([^<]*))<\/link>/i)
-    const dateM = chunk.match(/<pubDate[^>]*>([^<]*)<\/pubDate>/i)
-    const title = stripHtml((titleM?.[1] || titleM?.[2] || '').trim())
-    if (!title) continue
-    const summary = stripHtml((descM?.[1] || descM?.[2] || '').trim()).slice(0, 160)
-    const url = (linkM?.[1] || linkM?.[2] || '').trim() || undefined
-    let publishedAt = new Date().toISOString().slice(0, 10)
-    if (dateM?.[1]) {
-      const d = new Date(dateM[1])
-      if (!Number.isNaN(d.getTime())) publishedAt = d.toISOString().slice(0, 10)
-    }
-    items.push({ title, summary: summary || title, url, publishedAt })
-    if (items.length >= limit) break
-  }
-  return items
-}
-
-/** 人民日报财经：官网 RSS；Pages 无 rss2json 公网转换（无密钥） */
-async function tryFetchPeopleDaily(): Promise<BriefItem[]> {
-  const t0 = performance.now()
-  const day = new Date().toISOString().slice(0, 10)
-  try {
-    // 1) DEV 代理 / Electron 直连 RSS
-    const rssCandidates = quoteCandidateUrls(
-      '/api/people-rss/rss/finance.xml',
-      'https://www.people.com.cn/rss/finance.xml',
-    )
-    // Pages：rss2json 有 CORS *，作为优先候选之一
-    const relay =
-      'https://api.rss2json.com/v1/api.json?rss_url=' +
-      encodeURIComponent('https://www.people.com.cn/rss/finance.xml')
-    let parsed: Array<{ title: string; summary: string; url?: string; publishedAt: string }> = []
-
-    // 先试 JSON 转换（浏览器 Pages 更稳）
-    try {
-      const res = await fetchWithRetry(
-        relay,
-        { headers: providerHeaders('json') },
-        { retries: 0, timeoutMs: 7000, label: '人民日报rss2json' },
-      )
-      const json = await res.json()
-      const arr: Array<Record<string, unknown>> = json?.items || []
-      if (Array.isArray(arr) && arr.length > 0) {
-        parsed = arr.slice(0, 6).map((it) => {
-          const pub = String(it.pubDate || '')
-          let publishedAt = day
-          const d = new Date(pub)
-          if (!Number.isNaN(d.getTime())) publishedAt = d.toISOString().slice(0, 10)
-          return {
-            title: stripHtml(String(it.title || '')),
-            summary: stripHtml(String(it.description || it.content || it.title || '')).slice(0, 160),
-            url: String(it.link || '') || undefined,
-            publishedAt,
-          }
-        })
-      }
-    } catch {
-      /* fall through to raw RSS */
-    }
-
-    if (parsed.length === 0) {
-      const res = await fetchFirstOk(
-        rssCandidates,
-        { headers: providerHeaders('rss') },
-        { retries: 0, timeoutMs: 7000, label: '人民日报RSS' },
-      )
-      const xml = await res.text()
-      parsed = parseRssItems(xml, 6)
-    }
-
-    parsed = parsed.filter((x) => x.title)
-    if (parsed.length === 0) throw new Error('人民日报无条目')
-    markHealth('people', true, Math.round(performance.now() - t0))
-    return parsed.map((it, i) => ({
-      id: `people-${i}-${briefTitleKey(it.title).slice(0, 12)}`,
-      title: it.title,
-      summary: it.summary || it.title,
-      source: '人民日报 · 财经',
-      category: 'news' as const,
-      publishedAt: it.publishedAt || day,
-      url: it.url,
-    }))
-  } catch (e) {
-    markHealth('people', false, Math.round(performance.now() - t0), e instanceof Error ? e.message : '人民日报失败')
-    return []
-  }
-}
-
-/**
- * 「样式财经」经检索无独立公开站；同音最接近「央视财经」。
- * 使用央视网 economy JSONP（无密钥）；浏览器用 script 标签绕过无 CORS。
- */
-function loadJsonpFixedCallback(url: string, callbackName: string, timeoutMs = 7000): Promise<unknown> {
-  return new Promise((resolve, reject) => {
-    if (typeof document === 'undefined') {
-      reject(new Error('无 DOM，无法 JSONP'))
-      return
-    }
-    const w = window as unknown as Record<string, unknown>
-    const prev = w[callbackName]
-    const script = document.createElement('script')
-    let settled = false
-    const timer = window.setTimeout(() => cleanup(new Error(`${callbackName} JSONP 超时`)), timeoutMs)
-    function cleanup(err?: Error, data?: unknown) {
-      if (settled) return
-      settled = true
-      window.clearTimeout(timer)
-      script.remove()
-      if (prev !== undefined) w[callbackName] = prev
-      else delete w[callbackName]
-      if (err) reject(err)
-      else resolve(data)
-    }
-    w[callbackName] = (data: unknown) => cleanup(undefined, data)
-    script.onerror = () => cleanup(new Error(`${callbackName} JSONP 加载失败`))
-    script.src = url
-    document.head.appendChild(script)
-  })
-}
-
-async function tryFetchYangshiFinance(): Promise<BriefItem[]> {
-  const t0 = performance.now()
-  const day = new Date().toISOString().slice(0, 10)
-  try {
-    let list: Array<Record<string, unknown>> = []
-    // DEV：走代理拉 JSONP 文本再解析；Pages/Electron：script JSONP
-    if (import.meta.env.DEV) {
-      const res = await fetchWithRetry(
-        '/api/cctv-news/2019/07/gaiban/cmsdatainterface/page/economy_1.jsonp',
-        { headers: providerHeaders('json') },
-        { retries: 0, timeoutMs: 7000, label: '央视财经' },
-      )
-      const body = await res.text()
-      const start = body.indexOf('(')
-      const end = body.lastIndexOf(')')
-      if (start < 0 || end <= start) throw new Error('央视 JSONP 解析失败')
-      const json = JSON.parse(body.slice(start + 1, end)) as { data?: { list?: Array<Record<string, unknown>> } }
-      list = json?.data?.list || []
-    } else {
-      const data = (await loadJsonpFixedCallback(
-        'https://news.cctv.com/2019/07/gaiban/cmsdatainterface/page/economy_1.jsonp',
-        'economy',
-        7000,
-      )) as { data?: { list?: Array<Record<string, unknown>> } }
-      list = data?.data?.list || []
-    }
-    if (!Array.isArray(list) || list.length === 0) throw new Error('央视财经无条目')
-    markHealth('yangshi', true, Math.round(performance.now() - t0))
-    return list.slice(0, 6).map((row, i) => {
-      const title = stripHtml(String(row.title || ''))
-      const brief = stripHtml(String(row.brief || '')).slice(0, 160)
-      const url = String(row.url || '') || undefined
-      const focus = String(row.focus_date || '')
-      let publishedAt = day
-      if (focus) {
-        const d = new Date(focus.replace(/-/g, '/'))
-        if (!Number.isNaN(d.getTime())) publishedAt = d.toISOString().slice(0, 10)
-      }
-      return {
-        id: `yangshi-${i}-${briefTitleKey(title).slice(0, 12)}`,
-        title,
-        summary: brief || title,
-        source: '央视财经',
-        category: 'news' as const,
-        publishedAt,
-        url,
-      }
-    }).filter((x) => x.title)
-  } catch (e) {
-    markHealth('yangshi', false, Math.round(performance.now() - t0), e instanceof Error ? e.message : '央视财经失败')
-    return []
-  }
-}
-
-export const sampleBriefProvider: BriefProvider = {
-  id: 'people+yangshi+eastmoney',
-  async fetchBrief(watchSymbols = [], holdings = []) {
-    const [people, yangshi, east] = await Promise.all([
-      tryFetchPeopleDaily(),
-      tryFetchYangshiFinance(),
-      tryFetchEastmoneyHeadlines(),
-    ])
-    const remote = dedupeBriefItems([...people, ...yangshi, ...east])
-    const sample = sampleBrief(watchSymbols, holdings)
-    const top = sample.filter((x) => x.category === 'holding' || x.id === 's1')
-    const rest = sample.filter((x) => !(x.category === 'holding' || x.id === 's1'))
-    if (remote.length === 0) return sample
-    return dedupeBriefItems([...top, ...remote, ...rest])
-  },
-}
-
-let briefProvider: BriefProvider = sampleBriefProvider
-
-export function setBriefProvider(p: BriefProvider) {
-  briefProvider = p
-}
-
-export function getBriefProvider() {
-  return briefProvider
-}
+export type { BriefProvider } from './briefNews'
+export {
+  getBriefProvider,
+  setBriefProvider,
+  morningBriefProvider as sampleBriefProvider,
+  getBriefHealth,
+  probeBriefSources,
+  aggregateBrief,
+} from './briefNews'
 
 /** 检查价格/成交量提醒是否触发（尊重免打扰时段与稍后）
  *  @param rvolMap 可选：symbol → RVOL，用于 type==='rvol_above'

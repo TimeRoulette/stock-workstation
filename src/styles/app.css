@@ -1050,3 +1050,69 @@ table.data tr.selected { background: var(--accent-soft); }
     min-height: 36px;
   }
 }
+
+
+/* —— v0.8 日报分区 / 技术筛选 —— */
+.brief-sections { display: flex; flex-direction: column; gap: 18px; }
+.brief-section-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+.brief-status {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.brief-status.live { color: #7fd99a; border-color: rgba(127,217,154,.4); background: rgba(127,217,154,.1); }
+.brief-status.cached { color: #e0b15a; border-color: rgba(224,177,90,.4); background: rgba(224,177,90,.1); }
+.brief-status.sample { color: #9aa3b2; border-color: var(--border); background: rgba(154,163,178,.1); }
+.brief-status.degraded { color: #e07a7a; border-color: rgba(224,122,122,.4); }
+.brief-status.keyword { color: #5b9fd4; border-color: rgba(91,159,212,.4); background: rgba(91,159,212,.1); }
+.sent {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+.sent.bull { color: #e07a7a; background: rgba(224,122,122,.12); }
+.sent.bear { color: #7fd99a; background: rgba(127,217,154,.12); }
+.sent.watch { color: #e0b15a; background: rgba(224,177,90,.12); }
+.sent.neut { color: var(--text-muted); background: rgba(154,163,178,.1); }
+.topic-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.topic-chip {
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+.tech-progress-bar {
+  height: 6px;
+  background: var(--bg);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.tech-progress-bar > div {
+  height: 100%;
+  background: var(--accent);
+  transition: width .2s ease;
+}
+.tech-rule-details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+}
+.tech-panel select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 12px;
+}

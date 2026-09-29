@@ -107,6 +107,18 @@ export interface EquitySnapshot {
   equity: number
 }
 
+/** 日报条目数据新鲜度：实时拉取 / 本地缓存 / 示意样例 / 降级 */
+export type BriefDataStatus = 'live' | 'cached' | 'sample' | 'degraded'
+
+/** 与自选的关联方式；标题关键词匹配须在 UI 标明 */
+export type BriefMatchMode = 'none' | 'title_keyword' | 'symbol' | 'industry'
+
+/** 规则化情绪标签，非荐股/预测 */
+export type BriefSentiment = 'bullish' | 'bearish' | 'neutral' | 'watch'
+
+/** 早盘日报分区 */
+export type BriefSection = 'premarket' | 'overnight' | 'focus' | 'watchlist' | 'holding' | 'general'
+
 export interface BriefItem {
   id: string
   title: string
@@ -119,6 +131,18 @@ export interface BriefItem {
   symbols?: string[]
   /** 芯片跳转目标：盯盘或模拟 */
   jumpTo?: 'watchlist' | 'portfolio'
+  /** 数据状态：实时/缓存/示意/降级 */
+  dataStatus?: BriefDataStatus
+  /** 关联方式；title_keyword 时 UI 须标「标题关键词关联」 */
+  matchMode?: BriefMatchMode
+  /** 规则化利好/利空/中性/关注 */
+  sentiment?: BriefSentiment
+  /** 情绪依据说明（规则摘要，非预测） */
+  sentimentNote?: string
+  /** 早盘分区 */
+  section?: BriefSection
+  /** 宏观主题标签，如 央行/利率、地缘、商品/汇率 */
+  topics?: string[]
 }
 
 export type AlertType = 'above' | 'below' | 'pct_change' | 'rvol_above'

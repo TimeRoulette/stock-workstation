@@ -159,7 +159,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
               </table>
             )}
             <p className="muted" style={{ fontSize: 12, marginBottom: 0, marginTop: 8 }}>
-              进入本页会自动探测（真实轻量请求）。单源超时约 7s；失败立刻下一源。auto 对已知 down 源冷却约 3 分钟。缓存新鲜 TTL 30 分钟，可放宽至 24 小时后再 mock。日报源（人民日报 / 央视财经）亦在此探测。
+              进入本页会自动探测（真实轻量请求）。单源超时约 7s；失败立刻下一源。auto 对已知 down 源冷却约 3 分钟。缓存新鲜 TTL 30 分钟，可放宽至 24 小时后再 mock。日报源（人民日报 / 央视 / 华尔街见闻 / BBC / 美联储 / 东财榜）亦在此探测。
             </p>
           </div>
         </div>
@@ -215,6 +215,36 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
                   </td>
                   <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
                     未找到「样式财经」站；同音接央视网 economy JSONP（无密钥）
+                  </td>
+                </tr>
+                <tr>
+                  <td>华尔街见闻</td>
+                  <td>日报</td>
+                  <td>
+                    <span className="health-pill health-ok">已接</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    全球快讯公开 JSON（api-one-wscn）；Pages 经 corsproxy 回退
+                  </td>
+                </tr>
+                <tr>
+                  <td>BBC Business / 美联储</td>
+                  <td>日报</td>
+                  <td>
+                    <span className="health-pill health-ok">已接</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    公开 RSS → rss2json（无密钥）；覆盖国际宏观 / 央行
+                  </td>
+                </tr>
+                <tr>
+                  <td>技术选股</td>
+                  <td>选股</td>
+                  <td>
+                    <span className="health-pill health-ok">已接</span>
+                  </td>
+                  <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
+                    量价洗盘 / MACD 金叉 / 突破回踩；前200按需拉K线；示意数据不计命中
                   </td>
                 </tr>
                 <tr>
