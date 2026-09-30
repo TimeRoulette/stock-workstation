@@ -4,13 +4,17 @@
     "minVersion": "0.11.0",
     "apkUrl": "https://github.com/TimeRoulette/stock-workstation/releases/download/android-debug-latest/stock-workstation-0.12.2-debug.apk",
     "releasePage": "https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest",
-    "publishedAt": "2026-09-30T10:52:51+08:00",
+    "publishedAt": "2026-09-30T02:56:06Z",
     "changelog": [
-      "减少误落演示：浏览器优先同花顺（CORS *），去掉已失效的 corsproxy.io 中继，中继短超时快切换",
-      "冷却由 3 分钟调至约 60 秒；直连失败重试一次再换源",
-      "启动/刷新显示「拉取中」，有旧行情先显示旧行情，避免一直像演示",
-      "安卓 CapacitorHttp 原生 HTTP 绕 CORS（与 Electron 类似）",
-      "设置页源健康更醒目：通/挂汇总 + 行着色"
+      "Android debug APK v0.12.2（含应用内检查更新；soft Release）",
+      "fix(v0.12.2): 减少误落演示——同花顺优先、中继与原生 HTTP",
+      "chore(android): clarify app-update changelog wording [skip android]",
+      "fix(android): 补全 app-update changelog，CI 加深 fetch-depth [skip android]",
+      "chore(android): refresh app-update.json for v0.12.1 [skip android]",
+      "feat(v0.12.1): Android 应用内检查更新（可选）",
+      "feat(v0.12.0): 数据态直白文案、行情加固、模拟/实盘加深",
+      "fix(android): soft Release 直链 APK，并写清 artifact zip 需解压",
+      "fix(android): Actions SDK 跳过已下架 tools 包"
     ]
   }
 }
