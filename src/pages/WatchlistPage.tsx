@@ -4,7 +4,9 @@ import { CompareChart } from '../components/CompareChart'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Glossary } from '../components/Glossary'
 import { PriceChart } from '../components/PriceChart'
+import { CollapsibleTip } from '../components/CollapsibleTip'
 import { Skeleton, SkeletonTable } from '../components/Skeleton'
+import { Sparkline } from '../components/Sparkline'
 import { useQuotes } from '../hooks/useQuotes'
 import * as db from '../services/db'
 import {
@@ -81,6 +83,7 @@ export function WatchlistPage({
   const [alertType, setAlertType] = useState<PriceAlert['type']>('above')
   const [alertThreshold, setAlertThreshold] = useState('')
   const [rvolBySymbol, setRvolBySymbol] = useState<Record<string, number | null>>({})
+  const [sparkBySymbol, setSparkBySymbol] = useState<Record<string, { values: number[]; sample: boolean }>>({})
   const [confirmBuy, setConfirmBuy] = useState(false)
   const [candleNonce, setCandleNonce] = useState(0)
   const [compareMode, setCompareMode] = useState(false)
@@ -158,6 +161,40 @@ export function WatchlistPage({
       cancelled = true
     }
   }, [selected, period, candleNonce])
+
+
+  // 自选 sparkline：近 20 日收盘
+  useEffect(() => {
+    if (items.length === 0) {
+      setSparkBySymbol({})
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const out: Record<string, { values: number[]; sample: boolean }> = {}
+      const concurrency = 3
+      let i = 0
+      const run = async () => {
+        while (i < items.length) {
+          const idx = i++
+          const it = items[idx]
+          try {
+            const candles = await quoteService.fetchCandles(it.symbol, 30, '1d')
+            const closes = candles.map((c) => c.close).filter((v) => Number.isFinite(v) && v > 0)
+            const slice = closes.slice(-20)
+            out[it.symbol] = { values: slice, sample: slice.length < 5 }
+          } catch {
+            out[it.symbol] = { values: [], sample: true }
+          }
+        }
+      }
+      await Promise.all(Array.from({ length: concurrency }, () => run()))
+      if (!cancelled) setSparkBySymbol({ ...out })
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [items])
 
   // 价格提醒：行情刷新时立即评估（带上已有 RVOL 缓存）
   useEffect(() => {
@@ -382,6 +419,9 @@ export function WatchlistPage({
         </div>
       </header>
       <div className="page-body">
+        <CollapsibleTip summary="盯盘说明（点击展开）">
+          自选行内迷你走势为近 5–20 日真实收盘序列；点不足或示意行情会弱化显示。提醒支持模板与稍后；免打扰见设置。
+        </CollapsibleTip>
         {/* 一键添加 — 置顶少点击 */}
         <div className="quick-bar panel" data-coach="watchlist">
           <div className="panel-body quick-bar-inner">
@@ -478,6 +518,7 @@ export function WatchlistPage({
                       <th>代码</th>
                       <th>最新</th>
                       <th>涨跌</th>
+                      <th>走势</th>
                       <th>RVOL</th>
                       <th>标签</th>
                       <th></th>
@@ -531,6 +572,19 @@ export function WatchlistPage({
                           </td>
                           <td className={`mono ${q ? (up ? 'up' : 'down') : ''}`}>
                             {q ? fmtPct(q.changePercent) : '—'}
+                          </td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {(() => {
+                              const sp = sparkBySymbol[item.symbol]
+                              if (!sp || sp.values.length < 2) return <span className="muted">—</span>
+                              return (
+                                <Sparkline
+                                  values={sp.values}
+                                  sample={sp.sample || q?.source === 'mock'}
+                                  title={sp.sample ? '走势点不足/示意' : '近20日收盘'}
+                                />
+                              )
+                            })()}
                           </td>
                           <td>
                             {(() => {

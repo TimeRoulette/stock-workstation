@@ -846,62 +846,100 @@ export function buildSummaryAnalysis(
   )
   const boards = real.filter((i) => (i.topics || []).includes('A股') || i.source.includes('东财'))
 
-  const sentences: string[] = []
+  // 结构化段落（UI 用小标题+着色）；summary 保留纯文本回退
+  const blocks: NonNullable<BriefItem['structuredSummary']> = []
 
   if (real.length === 0) {
-    sentences.push('当前公开新闻源数据不足，无法生成有依据的汇总分析。')
-    sentences.push('请稍后刷新；本段不会编造未抓取到的隔夜或板块事件。')
+    blocks.push({
+      title: '隔夜基调',
+      body: '当前公开新闻源数据不足，无法生成有依据的汇总分析。请稍后刷新；本段不会编造未抓取到的事件。',
+      tone: 'neutral',
+      emphasis: ['数据不足'],
+    })
   } else {
-    // 隔夜基调
+    // 隔夜
     if (overnight.length === 0) {
-      sentences.push('隔夜全球相关条目较少或未归入该分区，隔夜基调暂不作判断。')
+      blocks.push({
+        title: '隔夜基调',
+        body: '隔夜全球相关条目较少或未归入该分区，隔夜基调暂不作判断。',
+        tone: 'neutral',
+      })
     } else {
       const bulls = overnight.filter((i) => i.sentiment === 'bullish').length
       const bears = overnight.filter((i) => i.sentiment === 'bearish').length
-      const tone =
-        bulls > bears + 1 ? '偏积极' : bears > bulls + 1 ? '偏谨慎' : '中性偏分化'
+      const tone: BriefSentiment =
+        bulls > bears + 1 ? 'bullish' : bears > bulls + 1 ? 'bearish' : 'neutral'
+      const toneLabel = tone === 'bullish' ? '偏积极' : tone === 'bearish' ? '偏谨慎' : '中性偏分化'
       const sample = overnight
         .slice(0, 2)
         .map((i) => i.title.replace(/^（示意）/, '').slice(0, 28))
         .join('；')
-      sentences.push(
-        `隔夜全球共归纳 ${overnight.length} 条，规则情绪整体${tone}（偏利好 ${bulls} / 偏空 ${bears}），例如：${sample}。`,
-      )
+      blocks.push({
+        title: '隔夜基调',
+        body: `隔夜全球共归纳 ${overnight.length} 条，规则情绪整体${toneLabel}（偏利好 ${bulls} / 偏空 ${bears}），例如：${sample}。`,
+        tone,
+        emphasis: [toneLabel, '偏利好', '偏空'],
+      })
     }
 
-    // 国内/板块
     const focusPool = focus.length ? focus : boards
     if (focusPool.length === 0) {
-      sentences.push('今日国内/板块焦点条目不足，暂无可靠板块异动摘要。')
+      blocks.push({
+        title: '国内/板块焦点',
+        body: '今日国内/板块焦点条目不足，暂无可靠板块异动摘要。',
+        tone: 'neutral',
+        emphasis: ['暂无可靠'],
+      })
     } else {
       const names = focusPool
         .slice(0, 3)
         .map((i) => i.title.slice(0, 24))
         .join('；')
-      sentences.push(`国内与板块焦点方面，已抓取 ${focusPool.length} 条，要点包括：${names}。`)
+      blocks.push({
+        title: '国内/板块焦点',
+        body: `已抓取 ${focusPool.length} 条，要点包括：${names}。`,
+        tone: 'watch',
+        emphasis: ['要点'],
+      })
     }
 
-    // 自选倾向
     if (watchCount <= 0) {
-      sentences.push('尚未添加自选，对持仓/自选的整体倾向暂无关联。')
+      blocks.push({
+        title: '自选倾向',
+        body: '尚未添加自选，对持仓/自选的整体倾向暂无关联。',
+        tone: 'neutral',
+      })
     } else if (watchHits.length === 0) {
-      sentences.push(
-        `自选共 ${watchCount} 只，当前标题关键词未能可靠匹配新闻，整体倾向标为「暂无关联」，不牵强解读。`,
-      )
+      blocks.push({
+        title: '自选倾向',
+        body: `自选共 ${watchCount} 只，当前标题关键词未能可靠匹配新闻，整体倾向标为「暂无关联」，不牵强解读。`,
+        tone: 'neutral',
+        emphasis: ['暂无关联'],
+      })
     } else {
       const wb = watchHits.filter((i) => i.sentiment === 'bullish').length
       const we = watchHits.filter((i) => i.sentiment === 'bearish').length
       const ww = watchHits.filter((i) => i.sentiment === 'watch').length
       let lean = '分化'
-      if (wb > we + 1 && ww === 0) lean = '偏利好'
-      else if (we > wb + 1) lean = '偏空'
-      else if (wb === 0 && we === 0) lean = '中性关注'
-      sentences.push(
-        `与自选相关的匹配新闻 ${watchHits.length} 条（自选 ${watchCount} 只），规则汇总倾向「${lean}」（利好 ${wb} / 利空 ${we} / 需关注 ${ww}）。`,
-      )
+      let tone: BriefSentiment = 'neutral'
+      if (wb > we + 1 && ww === 0) {
+        lean = '偏利好'
+        tone = 'bullish'
+      } else if (we > wb + 1) {
+        lean = '偏空'
+        tone = 'bearish'
+      } else if (wb === 0 && we === 0) {
+        lean = '中性关注'
+        tone = 'watch'
+      }
+      blocks.push({
+        title: '自选倾向',
+        body: `与自选相关的匹配新闻 ${watchHits.length} 条（自选 ${watchCount} 只），规则汇总倾向「${lean}」（利好 ${wb} / 利空 ${we} / 需关注 ${ww}）。`,
+        tone,
+        emphasis: [lean, '利好', '利空'],
+      })
     }
 
-    // 今日关注点
     const tips: string[] = []
     if (overnight.some((i) => (i.topics || []).some((t) => t.includes('利率') || t.includes('央行')))) {
       tips.push('央行/利率表述')
@@ -909,15 +947,18 @@ export function buildSummaryAnalysis(
     if (overnight.some((i) => (i.topics || []).some((t) => t.includes('地缘')))) {
       tips.push('地缘局势')
     }
-    if (focusPool.length) tips.push('国内板块轮动与量能')
+    if ((focus.length ? focus : boards).length) tips.push('国内板块轮动与量能')
     if (watchHits.length) tips.push('自选相关标题是否落地')
     if (!tips.length) tips.push('开盘高低开与成交额变化')
-    sentences.push(`今日可关注：${tips.slice(0, 4).join('、')}。`)
-    sentences.push('以上为基于已抓取新闻的规则汇总，非 AI 荐股，不构成投资建议。')
+    blocks.push({
+      title: '今日关注',
+      body: `${tips.slice(0, 4).join('、')}。以上为基于已抓取新闻的规则汇总，非 AI 荐股，不构成投资建议。`,
+      tone: 'watch',
+      emphasis: tips.slice(0, 3),
+    })
   }
 
-  // 控制 3–8 句
-  const body = sentences.slice(0, 8).join('')
+  const body = blocks.map((b) => `【${b.title}】${b.body}`).join('')
 
   return {
     id: 'summary-analysis',
@@ -931,8 +972,10 @@ export function buildSummaryAnalysis(
     matchMode: 'none',
     sentiment: 'neutral',
     topics: ['规则汇总'],
+    structuredSummary: blocks,
   }
 }
+
 
 export async function aggregateBrief(
   watchItems: Array<Pick<WatchlistItem, 'symbol' | 'name' | 'tag'>> = [],

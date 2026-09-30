@@ -5,9 +5,11 @@ import { EquityChart } from '../components/EquityChart'
 import { Glossary } from '../components/Glossary'
 import { useQuotes } from '../hooks/useQuotes'
 import * as db from '../services/db'
-import { detectMarket, lotSize, normalizeSymbol, toCnyHint } from '../services/quotes'
+import { notifyAlertFired } from '../services/notify'
+import { BENCHMARKS, computePaperPerf, type BenchmarkId, type PaperPerfResult } from '../services/paperPerf'
+import { detectMarket, lotSize, normalizeSymbol, quoteService, toCnyHint } from '../services/quotes'
 import { fmt, fmtPct, fmtSigned, safeNum } from '../utils/format'
-import type { EquitySnapshot, PaperAccount, Position, ToastItem, Trade, TradeSide } from '../types'
+import type { EquitySnapshot, PaperAccount, PendingOrder, Position, ToastItem, Trade, TradeSide } from '../types'
 
 type OrderType = 'market' | 'limit'
 
@@ -50,6 +52,12 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
   const [importRebuildCash, setImportRebuildCash] = useState(true)
   const [confirmRebuild, setConfirmRebuild] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const [pending, setPending] = useState<PendingOrder[]>([])
+  const [alertOnTouch, setAlertOnTouch] = useState(false)
+  const [autoCloseOnTouch, setAutoCloseOnTouch] = useState(false)
+  const [perf, setPerf] = useState<PaperPerfResult | null>(null)
+  const [benchId, setBenchId] = useState<BenchmarkId>('000300.SH')
+  const stopEvalRef = useRef<string>('')
 
   const symbols = useMemo(() => {
     const set = new Set(positions.map((p) => p.symbol))
@@ -71,6 +79,7 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
       }),
     )
     setSnapshots(db.listEquitySnapshots(300))
+    setPending(db.listPendingOrders('pending'))
   }
 
   useEffect(() => {
@@ -162,6 +171,89 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [quotes])
 
+  // 限价挂单撮合 + 止损触及（演示规则，非券商）
+  useEffect(() => {
+    if (Object.keys(quotes).length === 0) return
+    const priceMap: Record<string, number> = {}
+    for (const [sym, q] of Object.entries(quotes)) {
+      if (Number.isFinite(q.price)) priceMap[sym] = q.price
+    }
+    try {
+      const filled = db.matchPendingOrders(priceMap)
+      if (filled.length) {
+        for (const f of filled) {
+          const msg = `限价单成交（演示）：${f.order.side === 'buy' ? '买' : '卖'} ${f.order.symbol} ×${f.order.qty} @${f.order.limitPrice}`
+          onToast?.({ message: msg, type: 'success' })
+        }
+        db.snapshotEquity(priceMap)
+        reload()
+      }
+    } catch {
+      /* */
+    }
+    try {
+      const qmap: Record<string, { price: number; name?: string }> = {}
+      for (const [sym, q] of Object.entries(quotes)) {
+        qmap[sym] = { price: q.price, name: q.name }
+      }
+      const events = db.evaluateStopTouches(qmap)
+      if (events.length) {
+        for (const ev of events) {
+          const kind = ev.kind === 'stop' ? '止损' : '止盈'
+          const msg = ev.autoClosed
+            ? `${kind}触及并演示平仓：${ev.symbol} @${ev.price}（阈值 ${ev.threshold}；非券商撮合）`
+            : `${kind}触及提醒：${ev.symbol} 现价 ${ev.price}（阈值 ${ev.threshold}）`
+          const key = `${ev.symbol}-${ev.kind}-${ev.threshold}-${ev.autoClosed}`
+          if (stopEvalRef.current === key) continue
+          stopEvalRef.current = key
+          onToast?.({ message: msg, type: 'alert' })
+          notifyAlertFired(msg)
+        }
+        if (events.some((e) => e.autoClosed)) {
+          db.snapshotEquity(priceMap)
+          reload()
+        } else {
+          reload()
+        }
+      }
+    } catch {
+      /* */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotes])
+
+  // 简易绩效
+  useEffect(() => {
+    let cancelled = false
+    const allTrades = db.listTrades({ limit: 5000 })
+    const snaps = db.listEquitySnapshots(500)
+    const label = BENCHMARKS.find((b) => b.id === benchId)?.label || benchId
+    ;(async () => {
+      let closes: number[] = []
+      let sample = false
+      try {
+        const candles = await quoteService.fetchCandles(benchId, 120, '1d')
+        closes = candles.map((c) => c.close).filter((v) => Number.isFinite(v) && v > 0)
+        if (candles.some((c) => String((c as { source?: string }).source || '').includes('mock'))) sample = true
+        // 无法从 candle 判断 mock；若价格全接近整数随机则仍可能是真；缺数据标 unavailable
+      } catch {
+        closes = []
+      }
+      if (cancelled) return
+      setPerf(
+        computePaperPerf(allTrades, snaps, {
+          benchmarkId: benchId,
+          benchmarkLabel: label,
+          benchmarkCloses: closes,
+          sample,
+        }),
+      )
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [benchId, trades, snapshots])
+
   const applyQtyPreset = (shares: number) => setQty(String(shares))
 
   const applyCashPercent = (pct: number) => {
@@ -221,6 +313,23 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
     if (!confirmSide) return
     try {
       const norm = normalizeSymbol(symbol)
+      if (orderType === 'limit') {
+        const order = db.placePendingOrder({
+          symbol: norm.symbol,
+          name: name.trim() || norm.symbol,
+          side: confirmSide,
+          qty: Number(qty),
+          limitPrice: effectivePrice(),
+          note: '限价挂单（演示撮合）',
+        })
+        const msg = `已进入待成交：${confirmSide === 'buy' ? '买' : '卖'} ${order.symbol} ×${order.qty} @${order.limitPrice}（非券商撮合）`
+        setOk(msg)
+        onToast?.({ message: msg, type: 'success' })
+        setConfirmSide(null)
+        reload()
+        refresh()
+        return
+      }
       const trade = db.placeTrade({
         symbol: norm.symbol,
         name: name.trim() || norm.symbol,
@@ -257,6 +366,9 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
     if (q) setPrice(String(q.price))
     setStopLoss(p.stopLoss != null ? String(p.stopLoss) : '')
     setTakeProfit(p.takeProfit != null ? String(p.takeProfit) : '')
+    const note = db.getPositionNote(p.symbol)
+    setAlertOnTouch(!!note?.alertOnTouch)
+    setAutoCloseOnTouch(!!note?.autoCloseOnTouch)
   }
 
   const saveTargets = () => {
@@ -271,8 +383,19 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
       setError('止盈价格无效')
       return
     }
-    db.upsertPositionNote(detailSymbol, { stopLoss: sl, takeProfit: tp })
-    setOk('已保存止损/止盈备注（不会自动下单）')
+    db.upsertPositionNote(detailSymbol, {
+      stopLoss: sl,
+      takeProfit: tp,
+      alertOnTouch,
+      autoCloseOnTouch,
+    })
+    setOk(
+      autoCloseOnTouch
+        ? '已保存：触及可演示自动平仓（非券商撮合）'
+        : alertOnTouch
+          ? '已保存：触及将提醒（尊重免打扰）'
+          : '已保存止损/止盈备注',
+    )
     reload()
   }
 
@@ -360,6 +483,73 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
               </div>
             ) : (
               <EquityChart snapshots={snapshots} />
+            )}
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">
+            <span>模拟简易绩效</span>
+            <select
+              className="select compact"
+              value={benchId}
+              onChange={(e) => setBenchId(e.target.value as BenchmarkId)}
+              title="相对基准（示意）"
+            >
+              {BENCHMARKS.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="panel-body">
+            {!perf ? (
+              <p className="muted" style={{ margin: 0 }}>计算中…</p>
+            ) : (
+              <>
+                <div className="stat-row" style={{ marginBottom: 8 }}>
+                  <div className="stat-card">
+                    <div className="label">胜率（已平仓）</div>
+                    <div className="value">
+                      {perf.winRate == null ? '—' : `${perf.winRate.toFixed(0)}%`}
+                      <div className="muted" style={{ fontSize: 11, fontWeight: 400 }}>
+                        {perf.closedRounds} 回合 · 盈 {perf.wins} / 亏 {perf.losses}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">最大回撤</div>
+                    <div className="value">
+                      {perf.maxDrawdownPct == null ? '—' : `${perf.maxDrawdownPct.toFixed(2)}%`}
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">净值区间收益</div>
+                    <div className={`value ${(perf.equityReturnPct ?? 0) >= 0 ? 'up' : 'down'}`}>
+                      {perf.equityReturnPct == null ? '—' : `${perf.equityReturnPct.toFixed(2)}%`}
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="label">相对基准</div>
+                    <div className={`value ${(perf.relativePct ?? 0) >= 0 ? 'up' : 'down'}`}>
+                      {perf.benchmarkStatus === 'unavailable'
+                        ? '基准不可用'
+                        : perf.relativePct == null
+                          ? '—'
+                          : `${perf.relativePct >= 0 ? '+' : ''}${perf.relativePct.toFixed(2)}%`}
+                      <div className="muted" style={{ fontSize: 11, fontWeight: 400 }}>
+                        {perf.benchmarkLabel}
+                        {perf.benchmarkReturnPct != null ? ` ${perf.benchmarkReturnPct.toFixed(2)}%` : ''}
+                        {perf.benchmarkStatus === 'sample' ? ' · 示意' : ''}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                  {perf.note}
+                </p>
+              </>
             )}
           </div>
         </div>
@@ -568,13 +758,80 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
                       placeholder="备注价，不自动下单"
                     />
                   </div>
-                  <button className="btn primary" onClick={saveTargets}>
+                  <label className="check-inline" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 10, fontSize: 12.5 }}>
+                    <input type="checkbox" checked={alertOnTouch} onChange={(e) => setAlertOnTouch(e.target.checked)} />
+                    触及提醒（Toast/系统通知，尊重免打扰）
+                  </label>
+                  <label className="check-inline" style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6, fontSize: 12.5 }}>
+                    <input
+                      type="checkbox"
+                      checked={autoCloseOnTouch}
+                      onChange={(e) => setAutoCloseOnTouch(e.target.checked)}
+                    />
+                    触及后演示自动平仓（非券商撮合）
+                  </label>
+                  <button className="btn primary" onClick={saveTargets} style={{ marginTop: 10 }}>
                     保存目标价
                   </button>
                 </div>
               </div>
             )}
           </div>
+        </div>
+
+        <div className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-header">
+            <span>待成交挂单</span>
+            <span className="muted">{pending.length} · 演示撮合</span>
+          </div>
+          {pending.length === 0 ? (
+            <div className="empty-state compact">
+              <p>限价单会进入此队列；行情触及限价时成交并记流水。可取消。</p>
+            </div>
+          ) : (
+            <table className="data dense">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>方向</th>
+                  <th>代码</th>
+                  <th>数量</th>
+                  <th>限价</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {pending.map((o) => (
+                  <tr key={o.id} style={{ cursor: 'default' }}>
+                    <td className="muted">{new Date(o.createdAt).toLocaleString('zh-CN')}</td>
+                    <td className={o.side === 'buy' ? 'up' : 'down'}>{o.side === 'buy' ? '买' : '卖'}</td>
+                    <td className="mono">{o.symbol}</td>
+                    <td className="mono">{fmt(o.qty, 0)}</td>
+                    <td className="mono">{fmt(o.limitPrice)}</td>
+                    <td>
+                      <button
+                        className="btn danger btn-xs"
+                        onClick={() => {
+                          try {
+                            db.cancelPendingOrder(o.id)
+                            setOk(`已取消挂单 #${o.id}`)
+                            reload()
+                          } catch (e) {
+                            setError(e instanceof Error ? e.message : '取消失败')
+                          }
+                        }}
+                      >
+                        取消
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="muted" style={{ fontSize: 11, margin: '8px 12px 10px' }}>
+            规则：买限价当最新价≤限价成交；卖限价当最新价≥限价成交；成交价用限价。非券商撮合，仅供演示。
+          </p>
         </div>
 
         <div className="panel" style={{ marginTop: 16 }}>
@@ -701,17 +958,22 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
                 ? `⚠ 当前价格来自示意/模拟源，不能当作真实市价。` +
                   `仍要${confirmSide === 'buy' ? '买入' : '卖出'} ${normalizeSymbol(symbol).symbol} × ${qty}？` +
                   `示意价 ${orderCcy} ${fmt(effectivePrice())}。纸上交易，不会真实下单。`
-                : `即将${confirmSide === 'buy' ? '买入' : '卖出'} ${normalizeSymbol(symbol).symbol} × ${qty}（纸上交易）。` +
-                  `${orderType === 'market' ? '市价跟最新' : '限价'} ${orderCcy} ${fmt(effectivePrice())}，` +
-                  `合计约 ${fmt(Number(qty) * effectivePrice(), 0)}（另计约 0.03% 佣金）。不会真实下单。`)
+                : orderType === 'limit'
+                  ? `即将提交限价挂单：${confirmSide === 'buy' ? '买' : '卖'} ${normalizeSymbol(symbol).symbol} × ${qty} @ ${orderCcy} ${fmt(effectivePrice())}。` +
+                    `进入待成交队列；行情触及限价时按演示规则成交（买≤限价 / 卖≥限价），非券商撮合。`
+                  : `即将${confirmSide === 'buy' ? '买入' : '卖出'} ${normalizeSymbol(symbol).symbol} × ${qty}（纸上交易）。` +
+                    `市价跟最新 ${orderCcy} ${fmt(effectivePrice())}，` +
+                    `合计约 ${fmt(Number(qty) * effectivePrice(), 0)}（另计约 0.03% 佣金）。不会真实下单。`)
             : ''
         }
         confirmLabel={
           quotes[normalizeSymbol(symbol).symbol]?.source === 'mock'
             ? '已知晓示意价，继续'
-            : confirmSide === 'buy'
-              ? '确认买入'
-              : '确认卖出'
+            : orderType === 'limit'
+              ? '确认挂单'
+              : confirmSide === 'buy'
+                ? '确认买入'
+                : '确认卖出'
         }
         danger={confirmSide === 'sell' || quotes[normalizeSymbol(symbol).symbol]?.source === 'mock'}
         onConfirm={doPlace}

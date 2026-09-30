@@ -15,9 +15,12 @@ import type {
   PriceAlert,
   AlertType,
   JournalNote,
+  JournalNoteInput,
   ResetAccountOptions,
   RebuildCashResult,
   ImportTradesOptions,
+  PendingOrder,
+  PendingOrderStatus,
 } from '../types'
 
 const DB_KEY = 'stock-workstation-db-v1'
@@ -165,6 +168,9 @@ function migrate() {
   ].forEach((statement) => run(statement))
   migrateWatchlistTag()
   migrateAlertSnooze()
+  migratePendingOrders()
+  migratePositionNoteAlerts()
+  migrateJournalTemplate()
 }
 
 /** v0.4: 自选分组标签（幂等） */
@@ -194,6 +200,69 @@ function migrateAlertSnooze() {
     }
   } catch (e) {
     console.warn('migrateAlertSnooze', e)
+  }
+}
+
+/** v0.10: 限价挂单队列 */
+function migratePendingOrders() {
+  if (!db) return
+  try {
+    db.run(`CREATE TABLE IF NOT EXISTS pending_orders (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      symbol TEXT NOT NULL,
+      name TEXT NOT NULL,
+      side TEXT NOT NULL,
+      qty REAL NOT NULL,
+      limit_price REAL NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      filled_trade_id INTEGER,
+      note TEXT NOT NULL DEFAULT ''
+    )`)
+    scheduleSave()
+  } catch (e) {
+    console.warn('migratePendingOrders', e)
+  }
+}
+
+/** v0.10: 止损触及提醒 / 演示自动平仓 */
+function migratePositionNoteAlerts() {
+  if (!db) return
+  try {
+    const info = db.exec('PRAGMA table_info(position_notes)')
+    const cols = (info[0]?.values || []).map((r) => String(r[1]))
+    if (!cols.includes('alert_on_touch')) {
+      db.run('ALTER TABLE position_notes ADD COLUMN alert_on_touch INTEGER NOT NULL DEFAULT 0')
+    }
+    if (!cols.includes('auto_close_on_touch')) {
+      db.run('ALTER TABLE position_notes ADD COLUMN auto_close_on_touch INTEGER NOT NULL DEFAULT 0')
+    }
+    scheduleSave()
+  } catch (e) {
+    console.warn('migratePositionNoteAlerts', e)
+  }
+}
+
+/** v0.10: 复盘模板字段 */
+function migrateJournalTemplate() {
+  if (!db) return
+  try {
+    const info = db.exec('PRAGMA table_info(journal_notes)')
+    const cols = (info[0]?.values || []).map((r) => String(r[1]))
+    const adds: Array<[string, string]> = [
+      ['plan', "ALTER TABLE journal_notes ADD COLUMN plan TEXT NOT NULL DEFAULT ''"],
+      ['emotion', 'ALTER TABLE journal_notes ADD COLUMN emotion INTEGER NOT NULL DEFAULT 0'],
+      ['deviation', "ALTER TABLE journal_notes ADD COLUMN deviation TEXT NOT NULL DEFAULT ''"],
+      ['lesson', "ALTER TABLE journal_notes ADD COLUMN lesson TEXT NOT NULL DEFAULT ''"],
+      ['tags', "ALTER TABLE journal_notes ADD COLUMN tags TEXT NOT NULL DEFAULT ''"],
+    ]
+    for (const [col, sql] of adds) {
+      if (!cols.includes(col)) db.run(sql)
+    }
+    scheduleSave()
+  } catch (e) {
+    console.warn('migrateJournalTemplate', e)
   }
 }
 
@@ -533,47 +602,70 @@ export function listEquitySnapshots(limit = 200): EquitySnapshot[] {
   )
 }
 
+function mapPositionNote(r: SqlValue[]): PositionNote {
+  return {
+    symbol: String(r[0]),
+    stopLoss: r[1] == null ? null : Number(r[1]),
+    takeProfit: r[2] == null ? null : Number(r[2]),
+    note: String(r[3] || ''),
+    updatedAt: String(r[4]),
+    alertOnTouch: Number(r[5] ?? 0) === 1,
+    autoCloseOnTouch: Number(r[6] ?? 0) === 1,
+  }
+}
+
 export function getPositionNote(symbol: string): PositionNote | null {
   return queryOne(
-    'SELECT symbol, stop_loss, take_profit, note, updated_at FROM position_notes WHERE symbol = ?',
+    `SELECT symbol, stop_loss, take_profit, note, updated_at,
+            COALESCE(alert_on_touch, 0), COALESCE(auto_close_on_touch, 0)
+     FROM position_notes WHERE symbol = ?`,
     [symbol.toUpperCase()],
-    (r) => ({
-      symbol: String(r[0]),
-      stopLoss: r[1] == null ? null : Number(r[1]),
-      takeProfit: r[2] == null ? null : Number(r[2]),
-      note: String(r[3] || ''),
-      updatedAt: String(r[4]),
-    }),
+    mapPositionNote,
   )
 }
 
 export function listPositionNotes(): PositionNote[] {
   return queryAll(
-    'SELECT symbol, stop_loss, take_profit, note, updated_at FROM position_notes',
+    `SELECT symbol, stop_loss, take_profit, note, updated_at,
+            COALESCE(alert_on_touch, 0), COALESCE(auto_close_on_touch, 0)
+     FROM position_notes`,
     [],
-    (r) => ({
-      symbol: String(r[0]),
-      stopLoss: r[1] == null ? null : Number(r[1]),
-      takeProfit: r[2] == null ? null : Number(r[2]),
-      note: String(r[3] || ''),
-      updatedAt: String(r[4]),
-    }),
+    mapPositionNote,
   )
 }
 
 export function upsertPositionNote(
   symbol: string,
-  input: { stopLoss?: number | null; takeProfit?: number | null; note?: string },
+  input: {
+    stopLoss?: number | null
+    takeProfit?: number | null
+    note?: string
+    alertOnTouch?: boolean
+    autoCloseOnTouch?: boolean
+  },
 ) {
   const sym = symbol.toUpperCase()
   const prev = getPositionNote(sym)
   const stopLoss = input.stopLoss !== undefined ? input.stopLoss : prev?.stopLoss ?? null
   const takeProfit = input.takeProfit !== undefined ? input.takeProfit : prev?.takeProfit ?? null
   const note = input.note !== undefined ? input.note : prev?.note ?? ''
+  const alertOnTouch =
+    input.alertOnTouch !== undefined ? input.alertOnTouch : prev?.alertOnTouch ?? false
+  const autoCloseOnTouch =
+    input.autoCloseOnTouch !== undefined ? input.autoCloseOnTouch : prev?.autoCloseOnTouch ?? false
   run(
-    `INSERT OR REPLACE INTO position_notes (symbol, stop_loss, take_profit, note, updated_at)
-     VALUES (?, ?, ?, ?, ?)`,
-    [sym, stopLoss, takeProfit, note, new Date().toISOString()],
+    `INSERT OR REPLACE INTO position_notes
+      (symbol, stop_loss, take_profit, note, updated_at, alert_on_touch, auto_close_on_touch)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      sym,
+      stopLoss,
+      takeProfit,
+      note,
+      new Date().toISOString(),
+      alertOnTouch ? 1 : 0,
+      autoCloseOnTouch ? 1 : 0,
+    ],
   )
 }
 
@@ -751,6 +843,12 @@ export function countActiveAlerts(): number {
 
 /* ---------- Journal / 复盘 ---------- */
 
+const JOURNAL_SELECT =
+  `SELECT id, trade_id, symbol, title, body, created_at, updated_at,
+          COALESCE(plan, ''), COALESCE(emotion, 0), COALESCE(deviation, ''),
+          COALESCE(lesson, ''), COALESCE(tags, '')
+   FROM journal_notes`
+
 function mapJournal(r: SqlValue[]): JournalNote {
   return {
     id: Number(r[0]),
@@ -760,52 +858,71 @@ function mapJournal(r: SqlValue[]): JournalNote {
     body: String(r[4] || ''),
     createdAt: String(r[5]),
     updatedAt: String(r[6]),
+    plan: String(r[7] || ''),
+    emotion: Number(r[8] || 0),
+    deviation: String(r[9] || ''),
+    lesson: String(r[10] || ''),
+    tags: String(r[11] || ''),
   }
 }
 
 export function listJournalNotes(limit = 100): JournalNote[] {
   return queryAll(
-    'SELECT id, trade_id, symbol, title, body, created_at, updated_at FROM journal_notes ORDER BY updated_at DESC, id DESC LIMIT ?',
+    JOURNAL_SELECT + ' ORDER BY updated_at DESC, id DESC LIMIT ?',
     [limit],
     mapJournal,
   )
 }
 
-export function addJournalNote(input: {
-  symbol: string
-  title: string
-  body?: string
-  tradeId?: number | null
-}): JournalNote {
+export function addJournalNote(input: JournalNoteInput): JournalNote {
   const now = new Date().toISOString()
+  const emotion = Math.max(0, Math.min(5, Math.floor(Number(input.emotion) || 0)))
   run(
-    `INSERT INTO journal_notes (trade_id, symbol, title, body, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [input.tradeId ?? null, input.symbol.toUpperCase(), input.title.trim() || '无标题', input.body || '', now, now],
+    `INSERT INTO journal_notes
+      (trade_id, symbol, title, body, created_at, updated_at, plan, emotion, deviation, lesson, tags)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      input.tradeId ?? null,
+      input.symbol.toUpperCase(),
+      input.title.trim() || '无标题',
+      input.body || '',
+      now,
+      now,
+      input.plan || '',
+      emotion,
+      input.deviation || '',
+      input.lesson || '',
+      input.tags || '',
+    ],
   )
-  const n = queryOne(
-    'SELECT id, trade_id, symbol, title, body, created_at, updated_at FROM journal_notes ORDER BY id DESC LIMIT 1',
-    [],
-    mapJournal,
-  )
+  const n = queryOne(JOURNAL_SELECT + ' ORDER BY id DESC LIMIT 1', [], mapJournal)
   if (!n) throw new Error('保存笔记失败')
   return n
 }
 
-export function updateJournalNote(id: number, input: { title?: string; body?: string; symbol?: string }) {
-  const prev = queryOne(
-    'SELECT id, trade_id, symbol, title, body, created_at, updated_at FROM journal_notes WHERE id = ?',
-    [id],
-    mapJournal,
-  )
+export function updateJournalNote(
+  id: number,
+  input: Partial<JournalNoteInput> & { title?: string; body?: string; symbol?: string },
+) {
+  const prev = queryOne(JOURNAL_SELECT + ' WHERE id = ?', [id], mapJournal)
   if (!prev) throw new Error('笔记不存在')
+  const emotionRaw = input.emotion !== undefined ? Number(input.emotion) : prev.emotion
+  const emotion = Math.max(0, Math.min(5, Math.floor(emotionRaw || 0)))
   run(
-    'UPDATE journal_notes SET symbol = ?, title = ?, body = ?, updated_at = ? WHERE id = ?',
+    `UPDATE journal_notes SET symbol = ?, title = ?, body = ?, updated_at = ?,
+      plan = ?, emotion = ?, deviation = ?, lesson = ?, tags = ?, trade_id = ?
+     WHERE id = ?`,
     [
       (input.symbol ?? prev.symbol).toUpperCase(),
       input.title ?? prev.title,
       input.body ?? prev.body,
       new Date().toISOString(),
+      input.plan !== undefined ? input.plan : prev.plan,
+      emotion,
+      input.deviation !== undefined ? input.deviation : prev.deviation,
+      input.lesson !== undefined ? input.lesson : prev.lesson,
+      input.tags !== undefined ? input.tags : prev.tags,
+      input.tradeId !== undefined ? input.tradeId : prev.tradeId,
       id,
     ],
   )
@@ -816,22 +933,19 @@ export function deleteJournalNote(id: number) {
 }
 
 /** 从成交生成复盘草稿（不写入 DB，仅返回表单预填） */
-export function draftJournalFromTrade(t: Trade): {
-  symbol: string
-  title: string
-  body: string
-  tradeId: number
-} {
+export function draftJournalFromTrade(t: Trade): JournalNoteInput & { tradeId: number } {
   const sideLabel = t.side === 'buy' ? '买入' : '卖出'
   const sideShort = t.side === 'buy' ? '买' : '卖'
   return {
     symbol: t.symbol,
     title: `${sideLabel} ${t.symbol} 复盘`,
-    body:
-      `成交：${sideShort} ${t.qty} @ ${t.price}（费用 ${t.fee}）\n` +
-      `时间：${new Date(t.ts).toLocaleString('zh-CN')}\n` +
-      `理由：\n情绪：\n改进：\n`,
+    body: `成交：${sideShort} ${t.qty} @ ${t.price}（费用 ${t.fee}）\n时间：${new Date(t.ts).toLocaleString('zh-CN')}`,
     tradeId: t.id,
+    plan: '',
+    emotion: 3,
+    deviation: '',
+    lesson: '',
+    tags: '',
   }
 }
 
@@ -850,7 +964,10 @@ export function resetPaperAccount(opts?: Partial<ResetAccountOptions>) {
     clearJournal: opts?.clearJournal ?? false,
     restoreCash: opts?.restoreCash ?? true,
   }
-  if (o.clearTrades) run('DELETE FROM trades')
+  if (o.clearTrades) {
+    run('DELETE FROM trades')
+    run("DELETE FROM pending_orders")
+  }
   if (o.clearEquity) run('DELETE FROM equity_snapshots')
   if (o.clearNotes) run('DELETE FROM position_notes')
   if (o.clearJournal) run('DELETE FROM journal_notes')
@@ -1020,6 +1137,7 @@ export interface ReplaceWorkstationPayload {
   positionNotes: PositionNote[]
   journal: JournalNote[]
   settings: AppSettings & { notifyEnabled?: boolean }
+  pendingOrders?: PendingOrder[]
 }
 
 /** 用备份覆盖核心业务表（保留 quote_cache；settings 按备份写入） */
@@ -1033,6 +1151,7 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
     'DELETE FROM equity_snapshots',
     'DELETE FROM position_notes',
     'DELETE FROM journal_notes',
+    'DELETE FROM pending_orders',
     'DELETE FROM paper_account',
   ].forEach((sql) => run(sql))
 
@@ -1084,14 +1203,17 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
 
   for (const n of payload.positionNotes || []) {
     run(
-      `INSERT INTO position_notes (symbol, stop_loss, take_profit, note, updated_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO position_notes
+        (symbol, stop_loss, take_profit, note, updated_at, alert_on_touch, auto_close_on_touch)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         String(n.symbol).toUpperCase(),
         n.stopLoss,
         n.takeProfit,
         n.note || '',
         n.updatedAt || new Date().toISOString(),
+        n.alertOnTouch ? 1 : 0,
+        n.autoCloseOnTouch ? 1 : 0,
       ],
     )
   }
@@ -1118,8 +1240,9 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
 
   for (const j of payload.journal || []) {
     run(
-      `INSERT INTO journal_notes (id, trade_id, symbol, title, body, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO journal_notes
+        (id, trade_id, symbol, title, body, created_at, updated_at, plan, emotion, deviation, lesson, tags)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         j.id,
         j.tradeId,
@@ -1128,6 +1251,32 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
         j.body || '',
         j.createdAt || new Date().toISOString(),
         j.updatedAt || new Date().toISOString(),
+        j.plan || '',
+        j.emotion || 0,
+        j.deviation || '',
+        j.lesson || '',
+        j.tags || '',
+      ],
+    )
+  }
+
+  for (const o of payload.pendingOrders || []) {
+    run(
+      `INSERT INTO pending_orders
+        (id, symbol, name, side, qty, limit_price, status, created_at, updated_at, filled_trade_id, note)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        o.id,
+        String(o.symbol).toUpperCase(),
+        o.name || o.symbol,
+        o.side,
+        o.qty,
+        o.limitPrice,
+        o.status || 'pending',
+        o.createdAt || new Date().toISOString(),
+        o.updatedAt || new Date().toISOString(),
+        o.filledTradeId,
+        o.note || '',
       ],
     )
   }
@@ -1141,4 +1290,242 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
   if (s.volumeLookback != null) setSetting('volumeLookback', String(s.volumeLookback))
   if (s.defaultRvolAlert != null) setSetting('defaultRvolAlert', String(s.defaultRvolAlert))
   if (s.notifyEnabled != null) setSetting('notifyEnabled', s.notifyEnabled ? '1' : '0')
+}
+
+
+/* ---------- Pending limit orders (v0.10) ---------- */
+
+function mapPending(r: SqlValue[]): PendingOrder {
+  return {
+    id: Number(r[0]),
+    symbol: String(r[1]),
+    name: String(r[2]),
+    side: String(r[3]) as TradeSide,
+    qty: Number(r[4]),
+    limitPrice: Number(r[5]),
+    status: String(r[6]) as PendingOrderStatus,
+    createdAt: String(r[7]),
+    updatedAt: String(r[8]),
+    filledTradeId: r[9] == null ? null : Number(r[9]),
+    note: String(r[10] || ''),
+  }
+}
+
+const PENDING_SELECT =
+  `SELECT id, symbol, name, side, qty, limit_price, status, created_at, updated_at, filled_trade_id, note
+   FROM pending_orders`
+
+export function listPendingOrders(status: PendingOrderStatus | 'all' = 'pending'): PendingOrder[] {
+  if (status === 'all') {
+    return queryAll(PENDING_SELECT + ' ORDER BY id DESC', [], mapPending)
+  }
+  return queryAll(PENDING_SELECT + ' WHERE status = ? ORDER BY id DESC', [status], mapPending)
+}
+
+export function placePendingOrder(input: {
+  symbol: string
+  name: string
+  side: TradeSide
+  qty: number
+  limitPrice: number
+  note?: string
+}): PendingOrder {
+  if (!Number.isFinite(input.qty) || input.qty <= 0) throw new Error('数量必须大于 0')
+  if (!Number.isFinite(input.limitPrice) || input.limitPrice <= 0) throw new Error('限价必须大于 0')
+  const now = new Date().toISOString()
+  const symbol = input.symbol.toUpperCase()
+  run(
+    `INSERT INTO pending_orders
+      (symbol, name, side, qty, limit_price, status, created_at, updated_at, filled_trade_id, note)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, NULL, ?)`,
+    [symbol, input.name, input.side, input.qty, input.limitPrice, now, now, input.note || ''],
+  )
+  const o = queryOne(PENDING_SELECT + ' ORDER BY id DESC LIMIT 1', [], mapPending)
+  if (!o) throw new Error('挂单失败')
+  return o
+}
+
+export function cancelPendingOrder(id: number) {
+  const o = queryOne(PENDING_SELECT + ' WHERE id = ?', [id], mapPending)
+  if (!o) throw new Error('挂单不存在')
+  if (o.status !== 'pending') throw new Error('仅待成交挂单可取消')
+  run(`UPDATE pending_orders SET status = 'cancelled', updated_at = ? WHERE id = ?`, [
+    new Date().toISOString(),
+    id,
+  ])
+}
+
+/**
+ * 行情刷新时撮合待成交限价单。
+ * 演示规则（非券商撮合）：买限价 last<=limit 成交；卖限价 last>=limit 成交；成交价用限价。
+ */
+export function matchPendingOrders(
+  priceMap: Record<string, number>,
+): Array<{ order: PendingOrder; trade: Trade }> {
+  const pending = listPendingOrders('pending')
+  const filled: Array<{ order: PendingOrder; trade: Trade }> = []
+  for (const o of pending) {
+    const last = priceMap[o.symbol]
+    if (!Number.isFinite(last)) continue
+    const hit =
+      (o.side === 'buy' && last! <= o.limitPrice) || (o.side === 'sell' && last! >= o.limitPrice)
+    if (!hit) continue
+    try {
+      const trade = placeTrade({
+        symbol: o.symbol,
+        name: o.name,
+        side: o.side,
+        qty: o.qty,
+        price: o.limitPrice,
+      })
+      run(
+        `UPDATE pending_orders SET status = 'filled', updated_at = ?, filled_trade_id = ? WHERE id = ?`,
+        [new Date().toISOString(), trade.id, o.id],
+      )
+      filled.push({ order: { ...o, status: 'filled', filledTradeId: trade.id }, trade })
+    } catch (e) {
+      // 现金/持仓不足则保持挂单
+      console.warn('matchPendingOrder skip', o.id, e)
+    }
+  }
+  return filled
+}
+
+export interface StopTouchEvent {
+  symbol: string
+  name: string
+  kind: 'stop' | 'take'
+  price: number
+  threshold: number
+  autoClosed: boolean
+  trade?: Trade
+}
+
+/**
+ * 止损/止盈触及：提醒可选；自动平仓为演示规则（按最新价市价卖出全部持仓）。
+ */
+export function evaluateStopTouches(
+  quotes: Record<string, { price: number; name?: string }>,
+): StopTouchEvent[] {
+  const events: StopTouchEvent[] = []
+  const positions = listPositions()
+  for (const p of positions) {
+    const q = quotes[p.symbol]
+    if (!q || !Number.isFinite(q.price)) continue
+    const note = getPositionNote(p.symbol)
+    if (!note) continue
+    if (!note.alertOnTouch && !note.autoCloseOnTouch) continue
+    const last = q.price
+    let kind: 'stop' | 'take' | null = null
+    let threshold = 0
+    if (note.stopLoss != null && Number.isFinite(note.stopLoss) && last <= note.stopLoss) {
+      kind = 'stop'
+      threshold = note.stopLoss
+    } else if (
+      note.takeProfit != null &&
+      Number.isFinite(note.takeProfit) &&
+      last >= note.takeProfit
+    ) {
+      kind = 'take'
+      threshold = note.takeProfit
+    }
+    if (!kind) continue
+
+    let trade: Trade | undefined
+    let autoClosed = false
+    if (note.autoCloseOnTouch && p.qty > 0) {
+      try {
+        trade = placeTrade({
+          symbol: p.symbol,
+          name: q.name || p.name,
+          side: 'sell',
+          qty: p.qty,
+          price: last,
+        })
+        autoClosed = true
+        // 平仓后关闭自动，避免重复
+        upsertPositionNote(p.symbol, { autoCloseOnTouch: false, alertOnTouch: note.alertOnTouch })
+      } catch (e) {
+        console.warn('autoClose failed', p.symbol, e)
+      }
+    } else if (note.alertOnTouch) {
+      // 仅提醒一次：临时关掉 alert，避免刷屏（用户可再开）
+      upsertPositionNote(p.symbol, { alertOnTouch: false, autoCloseOnTouch: note.autoCloseOnTouch })
+    }
+
+    if (note.alertOnTouch || autoClosed) {
+      events.push({
+        symbol: p.symbol,
+        name: q.name || p.name,
+        kind,
+        price: last,
+        threshold,
+        autoClosed,
+        trade,
+      })
+    }
+  }
+  return events
+}
+
+export function exportJournalMarkdown(notes: JournalNote[] = listJournalNotes(5000)): string {
+  const lines: string[] = ['# 复盘笔记导出', '', `导出时间：${new Date().toLocaleString('zh-CN')}`, '']
+  for (const n of notes) {
+    lines.push(`## ${n.title}`)
+    lines.push('')
+    lines.push(`- 代码：${n.symbol}`)
+    if (n.tradeId != null) lines.push(`- 关联成交：#${n.tradeId}`)
+    if (n.emotion) lines.push(`- 情绪：${n.emotion}/5`)
+    if (n.tags) lines.push(`- 标签：${n.tags}`)
+    lines.push(`- 更新：${new Date(n.updatedAt).toLocaleString('zh-CN')}`)
+    lines.push('')
+    if (n.plan) {
+      lines.push('### 计划')
+      lines.push(n.plan)
+      lines.push('')
+    }
+    if (n.deviation) {
+      lines.push('### 执行偏差')
+      lines.push(n.deviation)
+      lines.push('')
+    }
+    if (n.lesson) {
+      lines.push('### 教训')
+      lines.push(n.lesson)
+      lines.push('')
+    }
+    if (n.body) {
+      lines.push('### 正文')
+      lines.push(n.body)
+      lines.push('')
+    }
+    lines.push('---')
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+export function exportJournalCsv(notes: JournalNote[] = listJournalNotes(5000)): string {
+  const rows = [
+    'id,symbol,title,tradeId,emotion,tags,plan,deviation,lesson,body,createdAt,updatedAt',
+  ]
+  for (const n of notes) {
+    rows.push(
+      [
+        n.id,
+        n.symbol,
+        csvEscape(n.title),
+        n.tradeId ?? '',
+        n.emotion,
+        csvEscape(n.tags),
+        csvEscape(n.plan),
+        csvEscape(n.deviation),
+        csvEscape(n.lesson),
+        csvEscape(n.body),
+        n.createdAt,
+        n.updatedAt,
+      ].join(','),
+    )
+  }
+  return rows.join('\n')
 }

@@ -1,9 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as db from '../services/db'
 import type { JournalNote, Trade } from '../types'
 
+function downloadText(filename: string, text: string, mime = 'text/plain;charset=utf-8') {
+  const blob = new Blob([text], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 interface Props {
-  /** 外部指定要草稿的成交 id（成交后跳转） */
   draftTradeId?: number | null
   onDraftConsumed?: () => void
 }
@@ -14,30 +23,41 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
   const [symbol, setSymbol] = useState('')
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
+  const [plan, setPlan] = useState('')
+  const [emotion, setEmotion] = useState(3)
+  const [deviation, setDeviation] = useState('')
+  const [lesson, setLesson] = useState('')
+  const [tags, setTags] = useState('')
   const [tradeId, setTradeId] = useState<number | ''>('')
   const [editing, setEditing] = useState<number | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
+  const [filterTag, setFilterTag] = useState('')
+  const [filterSymbol, setFilterSymbol] = useState('')
 
   const reload = () => {
-    setNotes(db.listJournalNotes(100))
+    setNotes(db.listJournalNotes(200))
     setTrades(db.listTrades({ limit: 40 }))
   }
 
   const applyDraft = (t: Trade) => {
     const d = db.draftJournalFromTrade(t)
-    setTradeId(d.tradeId)
+    setTradeId(d.tradeId!)
     setSymbol(d.symbol)
     setTitle(d.title)
-    setBody(d.body)
+    setBody(d.body || '')
+    setPlan(d.plan || '')
+    setEmotion(d.emotion && d.emotion > 0 ? d.emotion : 3)
+    setDeviation(d.deviation || '')
+    setLesson(d.lesson || '')
+    setTags(d.tags || '')
     setEditing(null)
-    setMsg('已从成交生成草稿，确认后点保存')
+    setMsg('已从成交生成草稿，填写模板字段后保存')
   }
 
   useEffect(() => {
     reload()
   }, [])
 
-  // 外部跳转：指定成交草稿
   useEffect(() => {
     if (draftTradeId == null) return
     const t = db.listTrades({ limit: 100 }).find((x) => x.id === draftTradeId)
@@ -46,35 +66,56 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftTradeId])
 
-  // 进入页且表单空时：自动草稿最近一笔
   useEffect(() => {
     if (draftTradeId != null) return
-    if (title || body || symbol) return
+    if (title || body || symbol || plan) return
     const latest = db.getLatestTrade()
     if (latest) applyDraft(latest)
-    // only on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const allTags = useMemo(() => {
+    const s = new Set<string>()
+    for (const n of notes) {
+      for (const t of (n.tags || '').split(/[,，\s]+/)) {
+        if (t.trim()) s.add(t.trim())
+      }
+    }
+    return [...s].sort()
+  }, [notes])
+
+  const filtered = useMemo(() => {
+    return notes.filter((n) => {
+      if (filterSymbol && !n.symbol.toUpperCase().includes(filterSymbol.toUpperCase())) return false
+      if (filterTag) {
+        const tags = (n.tags || '').split(/[,，\s]+/).map((x) => x.trim())
+        if (!tags.includes(filterTag)) return false
+      }
+      return true
+    })
+  }, [notes, filterTag, filterSymbol])
+
   const save = () => {
     try {
+      const payload = {
+        symbol: symbol || 'GENERAL',
+        title: title || '复盘',
+        body,
+        tradeId: tradeId === '' ? null : Number(tradeId),
+        plan,
+        emotion,
+        deviation,
+        lesson,
+        tags: tags.trim(),
+      }
       if (editing != null) {
-        db.updateJournalNote(editing, { symbol, title, body })
+        db.updateJournalNote(editing, payload)
         setMsg('笔记已更新')
       } else {
-        db.addJournalNote({
-          symbol: symbol || 'GENERAL',
-          title: title || '复盘',
-          body,
-          tradeId: tradeId === '' ? null : Number(tradeId),
-        })
+        db.addJournalNote(payload)
         setMsg('笔记已保存')
       }
-      setTitle('')
-      setBody('')
-      setSymbol('')
-      setTradeId('')
-      setEditing(null)
+      clearForm(false)
       reload()
     } catch (e) {
       setMsg(e instanceof Error ? e.message : '保存失败')
@@ -86,16 +127,26 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
     setSymbol(n.symbol)
     setTitle(n.title)
     setBody(n.body)
+    setPlan(n.plan || '')
+    setEmotion(n.emotion || 0)
+    setDeviation(n.deviation || '')
+    setLesson(n.lesson || '')
+    setTags(n.tags || '')
     setTradeId(n.tradeId ?? '')
   }
 
-  const clearForm = () => {
+  const clearForm = (clearMsg = true) => {
     setEditing(null)
     setTitle('')
     setBody('')
     setSymbol('')
     setTradeId('')
-    setMsg(null)
+    setPlan('')
+    setEmotion(3)
+    setDeviation('')
+    setLesson('')
+    setTags('')
+    if (clearMsg) setMsg(null)
   }
 
   return (
@@ -103,9 +154,21 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
       <header className="page-header">
         <div>
           <h2>复盘笔记</h2>
-          <p className="subtitle">买卖逻辑本地保存 · 可关联成交 · 支持自动草稿</p>
+          <p className="subtitle">结构化模板 · 可关联成交 · 导出 Markdown / CSV</p>
         </div>
         <div className="toolbar">
+          <button
+            className="btn"
+            onClick={() => downloadText('journal.md', db.exportJournalMarkdown(filtered), 'text/markdown;charset=utf-8')}
+          >
+            导出 MD
+          </button>
+          <button
+            className="btn"
+            onClick={() => downloadText('journal.csv', db.exportJournalCsv(filtered), 'text/csv;charset=utf-8')}
+          >
+            导出 CSV
+          </button>
           <button
             className="btn primary"
             onClick={() => {
@@ -128,21 +191,11 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
             <div className="panel-body">
               <div className="form-row">
                 <label>代码</label>
-                <input
-                  className="input"
-                  value={symbol}
-                  onChange={(e) => setSymbol(e.target.value)}
-                  placeholder="600519.SH"
-                />
+                <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="600519.SH" />
               </div>
               <div className="form-row">
                 <label>标题</label>
-                <input
-                  className="input"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="今日复盘…"
-                />
+                <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="今日复盘…" />
               </div>
               <div className="form-row">
                 <label>关联成交</label>
@@ -166,18 +219,44 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
                   ))}
                 </select>
               </div>
+              <div className="form-row">
+                <label>计划</label>
+                <textarea className="input textarea" rows={2} value={plan} onChange={(e) => setPlan(e.target.value)} placeholder="交易计划…" />
+              </div>
+              <div className="form-row">
+                <label>情绪 1–5</label>
+                <div className="seg-control">
+                  {[1, 2, 3, 4, 5].map((n) => (
+                    <button key={n} type="button" className={emotion === n ? 'active' : ''} onClick={() => setEmotion(n)}>
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="form-row">
+                <label>执行偏差</label>
+                <textarea className="input textarea" rows={2} value={deviation} onChange={(e) => setDeviation(e.target.value)} placeholder="与计划的差异…" />
+              </div>
+              <div className="form-row">
+                <label>教训</label>
+                <textarea className="input textarea" rows={2} value={lesson} onChange={(e) => setLesson(e.target.value)} placeholder="下次改进…" />
+              </div>
+              <div className="form-row">
+                <label>标签</label>
+                <input className="input" value={tags} onChange={(e) => setTags(e.target.value)} placeholder="短线, 突破（逗号分隔）" />
+              </div>
               <textarea
                 className="input textarea"
-                rows={8}
+                rows={4}
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
-                placeholder="写下理由、情绪、下次改进…"
+                placeholder="补充正文…"
               />
               <div className="toolbar" style={{ marginTop: 10 }}>
                 <button className="btn primary" onClick={save}>
                   {editing != null ? '更新' : '保存'}
                 </button>
-                <button className="btn" onClick={clearForm}>
+                <button className="btn" onClick={() => clearForm()}>
                   清空
                 </button>
               </div>
@@ -232,24 +311,65 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
         <div className="panel" style={{ marginTop: 16 }}>
           <div className="panel-header">
             <span>全部笔记</span>
-            <span className="muted">{notes.length}</span>
+            <div className="toolbar">
+              <input
+                className="input compact"
+                style={{ maxWidth: 120 }}
+                placeholder="筛代码"
+                value={filterSymbol}
+                onChange={(e) => setFilterSymbol(e.target.value)}
+              />
+              <select className="select compact" value={filterTag} onChange={(e) => setFilterTag(e.target.value)}>
+                <option value="">全部标签</option>
+                {allTags.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+              <span className="muted">
+                {filtered.length}/{notes.length}
+              </span>
+            </div>
           </div>
-          {notes.length === 0 ? (
+          {filtered.length === 0 ? (
             <div className="empty-state compact">
-              <p>还没有复盘笔记。点「从最近成交生成」可一键草稿。</p>
+              <p>还没有复盘笔记，或筛选无结果。点「从最近成交生成」可一键草稿。</p>
             </div>
           ) : (
             <div className="journal-list">
-              {notes.map((n) => (
+              {filtered.map((n) => (
                 <article key={n.id} className="journal-card">
                   <div className="brief-meta">
                     <span className="mono">{n.symbol}</span>
                     {n.tradeId != null && <span className="badge">成交 #{n.tradeId}</span>}
+                    {n.emotion > 0 && <span className="badge">情绪 {n.emotion}/5</span>}
+                    {n.tags &&
+                      n.tags.split(/[,，\s]+/).filter(Boolean).map((t) => (
+                        <span key={t} className="topic-chip">
+                          {t}
+                        </span>
+                      ))}
                     <span>·</span>
                     <span>{new Date(n.updatedAt).toLocaleString('zh-CN')}</span>
                   </div>
                   <h3>{n.title}</h3>
-                  <pre className="journal-body">{n.body || '（无正文）'}</pre>
+                  {n.plan && (
+                    <p className="journal-field">
+                      <strong>计划</strong> {n.plan}
+                    </p>
+                  )}
+                  {n.deviation && (
+                    <p className="journal-field">
+                      <strong>偏差</strong> {n.deviation}
+                    </p>
+                  )}
+                  {n.lesson && (
+                    <p className="journal-field">
+                      <strong>教训</strong> {n.lesson}
+                    </p>
+                  )}
+                  {n.body && <pre className="journal-body">{n.body}</pre>}
                   <div className="toolbar">
                     <button className="btn btn-xs" onClick={() => startEdit(n)}>
                       编辑

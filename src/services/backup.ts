@@ -35,10 +35,11 @@ export interface WorkstationBackup {
     settings: AppSettings & { notifyEnabled?: boolean }
     theme: 'light' | 'dark'
     techScanSnapshot: TechScanSnapshot | null
+    pendingOrders?: import('../types').PendingOrder[]
   }
 }
 
-export function exportWorkstationBackup(appVersion = '0.9.2'): WorkstationBackup {
+export function exportWorkstationBackup(appVersion = '0.10.0'): WorkstationBackup {
   const settings = db.getSettings()
   let theme: 'light' | 'dark' = settings.theme
   try {
@@ -64,6 +65,7 @@ export function exportWorkstationBackup(appVersion = '0.9.2'): WorkstationBackup
       settings: { ...settings, notifyEnabled },
       theme,
       techScanSnapshot: loadTechScanSnapshot(),
+      pendingOrders: db.listPendingOrders('all'),
     },
   }
 }
@@ -140,6 +142,7 @@ export function importWorkstationBackup(backup: WorkstationBackup): void {
     positionNotes: d.positionNotes || [],
     journal: d.journal || [],
     settings: d.settings,
+    pendingOrders: d.pendingOrders || [],
   })
 
   try {
@@ -173,6 +176,7 @@ export const BACKUP_FIELD_HELP = [
   'equity — 净值快照',
   'positionNotes — 止损/止盈备注',
   'journal — 复盘笔记',
+  'pendingOrders — 限价挂单',
   'settings — 行情源/刷新/免打扰/量监/通知等',
   'theme — 日间/夜间',
   'techScanSnapshot — 技术扫描上次结果（若有）',

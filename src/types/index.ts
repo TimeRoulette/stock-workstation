@@ -97,6 +97,10 @@ export interface PositionNote {
   takeProfit: number | null
   note: string
   updatedAt: string
+  /** 触及止损/止盈时 Toast/系统通知（尊重免打扰） */
+  alertOnTouch: boolean
+  /** 演示：触及后按最新价模拟平仓（非券商撮合） */
+  autoCloseOnTouch: boolean
 }
 
 export interface EquitySnapshot {
@@ -143,6 +147,17 @@ export interface BriefItem {
   section?: BriefSection
   /** 宏观主题标签，如 央行/利率、地缘、商品/汇率 */
   topics?: string[]
+  /** 汇总分析结构化段落（有则优先于纯文本 summary 渲染） */
+  structuredSummary?: BriefSummaryBlock[]
+}
+
+export interface BriefSummaryBlock {
+  title: string
+  body: string
+  /** 用于着色：利好偏涨 / 利空偏跌 / 中性 muted */
+  tone?: BriefSentiment
+  /** 需下划线强调的关键词 */
+  emphasis?: string[]
 }
 
 export type AlertType = 'above' | 'below' | 'pct_change' | 'rvol_above'
@@ -169,6 +184,16 @@ export interface JournalNote {
   body: string
   createdAt: string
   updatedAt: string
+  /** 计划 */
+  plan: string
+  /** 情绪 1–5，0=未填 */
+  emotion: number
+  /** 执行偏差 */
+  deviation: string
+  /** 教训 */
+  lesson: string
+  /** 标签，逗号分隔存库；UI 用数组 */
+  tags: string
 }
 
 export interface AppSettings {
@@ -241,4 +266,33 @@ export interface RebuildCashResult {
 export interface ImportTradesOptions {
   /** 导入后按成交日志重算现金（修复漂移） */
   rebuildCash?: boolean
+}
+
+/** 模拟限价挂单（待成交队列） */
+export type PendingOrderStatus = 'pending' | 'filled' | 'cancelled'
+
+export interface PendingOrder {
+  id: number
+  symbol: string
+  name: string
+  side: TradeSide
+  qty: number
+  limitPrice: number
+  status: PendingOrderStatus
+  createdAt: string
+  updatedAt: string
+  filledTradeId: number | null
+  note: string
+}
+
+export interface JournalNoteInput {
+  symbol: string
+  title: string
+  body?: string
+  tradeId?: number | null
+  plan?: string
+  emotion?: number
+  deviation?: string
+  lesson?: string
+  tags?: string
 }

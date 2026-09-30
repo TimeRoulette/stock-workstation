@@ -622,7 +622,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                 className="btn primary"
                 onClick={() => {
                   try {
-                    const r = downloadBackup('0.9.2')
+                    const r = downloadBackup('0.10.0')
                     setMsg(`已下载 ${r.filename}`)
                   } catch (e) {
                     setMsg(e instanceof Error ? e.message : '导出失败')
@@ -722,10 +722,28 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
         </Advanced>
 
         <div className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-header">窗口与 PWA</div>
+          <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
+            <p style={{ marginTop: 0 }}>
+              浏览器从别处点开本站链接时，<strong>无法 100% 强制合并到同一标签</strong>（安全限制）。
+              可减少多标签的做法：
+            </p>
+            <ul style={{ margin: '8px 0', paddingLeft: 18 }}>
+              <li>用浏览器「安装应用 / 添加到主屏幕」（PWA，standalone）</li>
+              <li>固定收藏夹入口；可控入口使用命名窗口 <code>stock-workstation</code></li>
+              <li>若检测到重复实例，顶栏可「尝试聚焦已有窗口」</li>
+            </ul>
+            <p className="muted" style={{ marginBottom: 0, fontSize: 12 }}>
+              站内外链：同 URL 将复用已开窗口（非每次无条件新开）。
+            </p>
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginTop: 16 }}>
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.9.2 · 简单 UX，更深功能
+              <strong>股票工作台</strong> v0.10.0 · 挂单/绩效/复盘模板/PWA
             </p>
             <p className="muted">
               运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}

@@ -46,7 +46,12 @@ function isTypingTarget(el: EventTarget | null): boolean {
   return el.isContentEditable
 }
 
-export default function App() {
+interface AppProps {
+  instanceRole?: 'primary' | 'duplicate'
+  tryFocusPrimary?: () => boolean
+}
+
+export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppProps) {
   const [ready, setReady] = useState(false)
   const [page, setPage] = useState<PageKey>('watchlist')
   const [history, setHistory] = useState<PageKey[]>([])
@@ -74,6 +79,7 @@ export default function App() {
   const [dataStatus, setDataStatus] = useState<DataStatusSummary>(() =>
     summarizeDataStatus([], { providerMode: 'auto' }),
   )
+  const [dupDismissed, setDupDismissed] = useState(false)
 
   const refreshAlertCount = useCallback(() => {
     try {
@@ -210,6 +216,26 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {instanceRole === 'duplicate' && !dupDismissed && (
+        <div className="dup-banner" role="status">
+          <span>检测到本应用可能已在其他标签打开。</span>
+          <button
+            type="button"
+            className="btn btn-xs primary"
+            onClick={() => {
+              tryFocusPrimary?.()
+            }}
+          >
+            尝试聚焦已有窗口
+          </button>
+          <button type="button" className="btn btn-xs" onClick={() => setDupDismissed(true)}>
+            继续使用此页
+          </button>
+          <span className="muted" style={{ fontSize: 11 }}>
+            安装 PWA / 用收藏夹可减少多标签；外链无法 100% 强制合并。
+          </span>
+        </div>
+      )}
       <Sidebar
         current={page}
         onNavigate={navigate}

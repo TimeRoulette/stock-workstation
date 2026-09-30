@@ -3,8 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="description" content="股票工作台 — 盯盘、模拟交易、日报" />
+    <meta name="description" content="股票工作台 — 盯盘、模拟交易、日报、复盘" />
     <meta name="theme-color" content="#0c1015" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="股票工作台" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+    <link rel="apple-touch-icon" href="./icons/icon-512.png" />
     <title>股票工作台</title>
     <script>
       (function () {
@@ -17,6 +23,8 @@
           document.documentElement.style.colorScheme = t;
           var m = document.querySelector('meta[name="theme-color"]');
           if (m) m.setAttribute('content', t === 'light' ? '#f4f6f9' : '#0c1015');
+          // 命名窗口：尽量让可控入口复用同一窗口名
+          if (!window.name) window.name = 'stock-workstation';
         } catch (e) {}
       })();
     </script>
