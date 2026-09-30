@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as db from '../services/db'
 import type { JournalNote, Trade } from '../types'
+import { Glossary } from '../components/Glossary'
 
 function downloadText(filename: string, text: string, mime = 'text/plain;charset=utf-8') {
   const blob = new Blob([text], { type: mime })
@@ -185,6 +186,7 @@ export function JournalPage({ draftTradeId, onDraftConsumed }: Props) {
         </div>
       </header>
       <div className="page-body">
+        <Glossary kind="journal" className="glossary-banner" />
         <div className="grid-2">
           <div className="panel">
             <div className="panel-header">{editing != null ? `编辑 #${editing}` : '写笔记'}</div>

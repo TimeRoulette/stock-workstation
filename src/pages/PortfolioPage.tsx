@@ -499,6 +499,8 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
           <div className="state-banner error">行情异常：{quoteError}</div>
         )}
 
+        <Glossary kind="paper" className="glossary-banner" />
+
         <div className="stat-row">
           <div className="stat-card">
             <div className="label">总资产 (CNY)</div>

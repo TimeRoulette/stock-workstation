@@ -6,7 +6,7 @@
 import { openExternalLink } from '../utils/openExternalLink'
 
 export const APP_VERSION =
-  (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_APP_VERSION as string)) || '0.12.3'
+  (typeof import.meta !== 'undefined' && (import.meta.env?.VITE_APP_VERSION as string)) || '0.12.4'
 
 /** 线上权威元数据（APK 内置相对路径可能过期，必须拉 Pages） */
 export const APP_UPDATE_META_URL =

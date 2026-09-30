@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Advanced } from '../components/Advanced'
+import { Glossary } from '../components/Glossary'
 import { SettingsSection } from '../components/SettingsSection'
 import * as db from '../services/db'
 import { getProviderHealth, quoteService, syncQuoteProxyFromDb } from '../services/quotes'
@@ -264,6 +265,7 @@ export function SettingsPage({
         </div>
       </header>
       <div className="page-body" key={sectionTick}>
+        <Glossary kind="settings" className="glossary-banner" />
         <SettingsSection id="appearance" title="外观" defaultOpen>
           <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
             日间浅色 / 夜间深色。首次跟随系统，手动切换后记住你的选择。

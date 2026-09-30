@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CollapsibleTip } from '../components/CollapsibleTip'
+import { Glossary } from '../components/Glossary'
 import { ExternalLink } from '../components/ExternalLink'
 import { Skeleton } from '../components/Skeleton'
 import * as db from '../services/db'
@@ -266,11 +267,8 @@ export function BriefPage({ onOpenSymbol }: Props) {
         </div>
       </header>
       <div className="page-body">
-        <CollapsibleTip summary="日报说明 · 外链复用（点击展开）">
-          公开源：人民日报财经、央视财经、华尔街见闻、BBC Business、美联储新闻稿、东财板块榜（均无密钥）。
-          每条标注「最新/旧行情/演示」；自选匹配若仅标题关键词会标明。「汇总分析」为基于已抓取新闻的规则短文，非 AI
-          荐股。仅供研究，不构成投资建议。
-          <br />
+        <Glossary kind="brief" className="glossary-banner" />
+        <CollapsibleTip summary="外链复用说明（点击展开）">
           <span className="muted">{EXTERNAL_LINK_HINT}。</span>
         </CollapsibleTip>
 

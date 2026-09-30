@@ -16,6 +16,7 @@ import { normalizeSymbol } from '../services/quotes'
 import { fmt, fmtPct, fmtSigned } from '../utils/format'
 import type { LiveTrade, ToastItem, TradeSide } from '../types'
 import { Icons } from '../components/Icon'
+import { Glossary } from '../components/Glossary'
 
 interface Props {
   refreshSec: number
@@ -220,6 +221,8 @@ export function LivePage({ refreshSec, onToast, onOpenJournal }: Props) {
           <strong>不是</strong>券商对接，也<strong>不做</strong>
           未授权爬取登录。分析结果仅供个人复盘学习，<strong>不构成投资建议</strong>。
         </div>
+
+        <Glossary kind="live" className="glossary-banner" />
 
         <div className="panel" style={{ marginBottom: 16 }}>
           <div className="panel-header">导入成交</div>

@@ -271,7 +271,7 @@ export function VolumePage({ onToast, onAlertsChange, onFocusSymbol }: Props) {
         )}
 
         <div style={{ marginTop: 16 }}>
-          <Glossary kind="volume" />
+          <Glossary kind="volume" className="glossary-banner" />
         </div>
       </div>
     </>

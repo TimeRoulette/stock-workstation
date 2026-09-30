@@ -1385,7 +1385,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
         )}
 
         <div style={{ marginTop: 16 }}>
-          <Glossary kind="screener" />
+          <Glossary kind="screener" className="glossary-banner" />
         </div>
       </div>
     </>

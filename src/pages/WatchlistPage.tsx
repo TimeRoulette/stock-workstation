@@ -4,7 +4,6 @@ import { CompareChart } from '../components/CompareChart'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Glossary } from '../components/Glossary'
 import { PriceChart } from '../components/PriceChart'
-import { CollapsibleTip } from '../components/CollapsibleTip'
 import { Skeleton, SkeletonTable } from '../components/Skeleton'
 import { Sparkline } from '../components/Sparkline'
 import { useQuotes } from '../hooks/useQuotes'
@@ -420,9 +419,7 @@ export function WatchlistPage({
         </div>
       </header>
       <div className="page-body">
-        <CollapsibleTip summary="盯盘说明（点击展开）">
-          自选行内迷你走势为近 5–20 日真实收盘序列；点不足或演示行情会弱化显示。提醒支持模板与稍后；免打扰见设置。
-        </CollapsibleTip>
+        <Glossary kind="watchlist" className="glossary-banner" />
         {/* 一键添加 — 置顶少点击 */}
         <div className="quick-bar panel" data-coach="watchlist">
           <div className="panel-body quick-bar-inner">

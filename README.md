@@ -2,7 +2,7 @@
 
 跨平台个人股票工作台：盯盘自选、指标图表、价格提醒、模拟持仓、日报简报、复盘笔记。本地优先（SQLite / sql.js），中文界面，无需 API Key。
 
-**当前版本：v0.12.1** — Android 应用内检查更新（可选）· 数据态直白文案 · 行情加固 · 模拟/实盘加深。
+**当前版本：v0.12.4** — Android 应用内检查更新（可选）· 数据态直白文案 · 行情加固 · 模拟/实盘加深。
 
 ## 30 秒上手
 
@@ -165,6 +165,12 @@ stock-workstation/
 | `npm run electron:build:win/mac/linux` | 对应平台包 |
 | `npm run validate` | 技术选股 / 绩效规则自检 |
 | `npm run android:add` / `android:sync` | Capacitor 安卓工程（需本机 SDK 或用 Actions） |
+
+## 变更摘要 · v0.12.4
+
+- **新手术语全覆盖**：盯盘 / 量监 / 选股 / 模拟（挂单·绩效·费率） / 实盘 / 日报 / 复盘 / 设置（数据态·LLM·通知·备份·更新）均可「展开了解」
+- 复用 `Glossary` 集中词条；默认折叠；文案标明非投资建议
+- Android soft Release APK + `app-update.json`
 
 ## 变更摘要 · v0.12.1
 
