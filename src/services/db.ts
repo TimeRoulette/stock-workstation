@@ -284,10 +284,20 @@ export function getSettings(): AppSettings {
   const muteEnd = Number(getSetting('muteEndHour') ?? 7)
   const volLb = Number(getSetting('volumeLookback') ?? 20)
   const defRvol = Number(getSetting('defaultRvolAlert') ?? 2)
+  let theme: 'light' | 'dark' = 'dark'
+  try {
+    const saved = localStorage.getItem('sw-theme')
+    if (saved === 'light' || saved === 'dark') theme = saved
+    else if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) {
+      theme = 'light'
+    }
+  } catch {
+    /* */
+  }
   return {
     quoteProvider: provider,
     refreshIntervalSec: Number(getSetting('refreshIntervalSec') || 30),
-    theme: 'dark',
+    theme,
     locale: 'zh-CN',
     coachDismissed: getSetting('coachDismissed') === '1',
     muteStartHour: Number.isFinite(muteStart) ? Math.max(0, Math.min(23, Math.floor(muteStart))) : 23,

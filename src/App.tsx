@@ -13,6 +13,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import * as db from './services/db'
 import { quoteService } from './services/quotes'
 import type { AppSettings, ToastItem } from './types'
+import { useTheme } from './hooks/useTheme'
 
 const PAGE_BY_KEY: Record<string, PageKey> = {
   '1': 'watchlist',
@@ -63,6 +64,7 @@ export default function App() {
   const [alertCount, setAlertCount] = useState(0)
   const [showCoach, setShowCoach] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const { theme, setTheme } = useTheme()
   const [focusSymbol, setFocusSymbol] = useState<string | null>(null)
   const [portfolioSymbol, setPortfolioSymbol] = useState<string | null>(null)
 
@@ -193,6 +195,11 @@ export default function App() {
         onNavigate={navigate}
         alertCount={alertCount}
         onShowShortcuts={() => setShowShortcuts(true)}
+        theme={theme}
+        onThemeChange={(th) => {
+          setTheme(th)
+          setSettings((s) => ({ ...s, theme: th }))
+        }}
       />
       <main className="main">
         {canGoBack && (
@@ -256,10 +263,18 @@ export default function App() {
         )}
         {page === 'settings' && (
           <SettingsPage
-            settings={settings}
-            onChange={setSettings}
+            settings={{ ...settings, theme }}
+            onChange={(s) => {
+              setSettings(s)
+              if (s.theme !== theme) setTheme(s.theme)
+            }}
             onShowCoach={() => setShowCoach(true)}
             onShowShortcuts={() => setShowShortcuts(true)}
+            theme={theme}
+            onThemeChange={(th) => {
+              setTheme(th)
+              setSettings((s) => ({ ...s, theme: th }))
+            }}
           />
         )}
       </main>

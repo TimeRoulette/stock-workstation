@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { ThemeToggle } from './ThemeToggle'
+import type { ThemeMode } from '../utils/theme'
 
 export type PageKey =
   | 'watchlist'
@@ -24,9 +26,11 @@ interface Props {
   onNavigate: (p: PageKey) => void
   alertCount?: number
   onShowShortcuts?: () => void
+  theme: ThemeMode
+  onThemeChange: (theme: ThemeMode) => void
 }
 
-export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }: Props) {
+export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, theme, onThemeChange }: Props) {
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
@@ -69,7 +73,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
           {!collapsed && (
             <div className="brand-text">
               <h1>股票工作台</h1>
-              <p>v0.7.1 · 本地优先</p>
+              <p>v0.9.1 · 本地优先</p>
             </div>
           )}
           <button
@@ -82,6 +86,9 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
           </button>
         </div>
         {navButtons()}
+        <div className="sidebar-theme-row">
+          <ThemeToggle theme={theme} onChange={onThemeChange} />
+        </div>
         {!collapsed && (
           <div className="sidebar-footer">
             <button type="button" className="btn btn-xs sidebar-hint-btn" onClick={onShowShortcuts}>
@@ -106,6 +113,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
           <span className="brand-mark sm">股</span>
           <span>{NAV.find((n) => n.key === current)?.label || '股票工作台'}</span>
         </div>
+        <ThemeToggle theme={theme} onChange={onThemeChange} />
         <button
           type="button"
           className="btn btn-xs touch-target"
@@ -132,7 +140,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
               <div className="brand-mark">股</div>
               <div className="brand-text">
                 <h1>股票工作台</h1>
-                <p>v0.7.1 · 本地优先</p>
+                <p>v0.9.1 · 本地优先</p>
               </div>
               <button
                 type="button"
@@ -144,6 +152,9 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts }
               </button>
             </div>
             {navButtons()}
+            <div className="sidebar-theme-row">
+              <ThemeToggle theme={theme} onChange={onThemeChange} />
+            </div>
             <div className="sidebar-footer">
               <div>数据仅供学习，不构成投资建议。</div>
             </div>

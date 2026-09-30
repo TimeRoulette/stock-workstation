@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { createChart, type IChartApi, type ISeriesApi, ColorType, type UTCTimestamp } from 'lightweight-charts'
 import type { EquitySnapshot } from '../types'
+import { getChartThemeColors, subscribeThemeChange } from '../utils/theme'
 
 interface Props {
   snapshots: EquitySnapshot[]
@@ -14,22 +15,23 @@ export function EquityChart({ snapshots, height = 220 }: Props) {
 
   useEffect(() => {
     if (!ref.current) return
+    const colors = getChartThemeColors()
     const chart = createChart(ref.current, {
       height,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#8b949e',
+        textColor: colors.text,
       },
       grid: {
-        vertLines: { color: 'rgba(48,54,61,0.45)' },
-        horzLines: { color: 'rgba(48,54,61,0.45)' },
+        vertLines: { color: colors.grid },
+        horzLines: { color: colors.grid },
       },
-      rightPriceScale: { borderColor: '#30363d' },
-      timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: colors.border },
+      timeScale: { borderColor: colors.border, timeVisible: true, secondsVisible: false },
       crosshair: { mode: 0 },
     })
     const series = chart.addAreaSeries({
-      lineColor: '#5b9fd4',
+      lineColor: colors.accent,
       topColor: 'rgba(91,159,212,0.35)',
       bottomColor: 'rgba(91,159,212,0.02)',
       lineWidth: 2,
@@ -37,12 +39,24 @@ export function EquityChart({ snapshots, height = 220 }: Props) {
     chartRef.current = chart
     seriesRef.current = series
 
+    const unsubTheme = subscribeThemeChange(() => {
+      const c = getChartThemeColors()
+      chart.applyOptions({
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: c.text },
+        grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+        rightPriceScale: { borderColor: c.border },
+        timeScale: { borderColor: c.border },
+      })
+      series.applyOptions({ lineColor: c.accent })
+    })
+
     const ro = new ResizeObserver(() => {
       if (ref.current) chart.applyOptions({ width: ref.current.clientWidth })
     })
     ro.observe(ref.current)
 
     return () => {
+      unsubTheme()
       ro.disconnect()
       chart.remove()
       chartRef.current = null

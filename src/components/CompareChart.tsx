@@ -8,6 +8,7 @@ import {
   type BusinessDay,
 } from 'lightweight-charts'
 import type { Candle } from '../types'
+import { getChartThemeColors, subscribeThemeChange } from '../utils/theme'
 
 export interface CompareSeries {
   symbol: string
@@ -42,26 +43,37 @@ export function CompareChart({ series, height = 280 }: Props) {
 
   useEffect(() => {
     if (!ref.current) return
+    const colors = getChartThemeColors()
     const chart = createChart(ref.current, {
       height,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#8b949e',
+        textColor: colors.text,
       },
       grid: {
-        vertLines: { color: 'rgba(48,54,61,0.45)' },
-        horzLines: { color: 'rgba(48,54,61,0.45)' },
+        vertLines: { color: colors.grid },
+        horzLines: { color: colors.grid },
       },
-      rightPriceScale: { borderColor: '#30363d' },
-      timeScale: { borderColor: '#30363d' },
+      rightPriceScale: { borderColor: colors.border },
+      timeScale: { borderColor: colors.border },
       crosshair: { mode: 0 },
     })
     chartRef.current = chart
+    const unsubTheme = subscribeThemeChange(() => {
+      const c = getChartThemeColors()
+      chart.applyOptions({
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: c.text },
+        grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+        rightPriceScale: { borderColor: c.border },
+        timeScale: { borderColor: c.border },
+      })
+    })
     const ro = new ResizeObserver(() => {
       if (ref.current) chart.applyOptions({ width: ref.current.clientWidth })
     })
     ro.observe(ref.current)
     return () => {
+      unsubTheme()
       ro.disconnect()
       chart.remove()
       chartRef.current = null

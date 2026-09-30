@@ -8,6 +8,7 @@ import {
   type BusinessDay,
 } from 'lightweight-charts'
 import type { Candle, IndicatorKey } from '../types'
+import { getChartThemeColors, subscribeThemeChange } from '../utils/theme'
 
 interface Props {
   candles: Candle[]
@@ -81,38 +82,39 @@ export function PriceChart({ candles, height = 360, indicators = ['ma', 'vol'] }
 
   useEffect(() => {
     if (!ref.current) return
+    const colors = getChartThemeColors()
     const chart = createChart(ref.current, {
       height: mainH,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#8b949e',
+        textColor: colors.text,
       },
       grid: {
-        vertLines: { color: 'rgba(48,54,61,0.6)' },
-        horzLines: { color: 'rgba(48,54,61,0.6)' },
+        vertLines: { color: colors.grid },
+        horzLines: { color: colors.grid },
       },
-      rightPriceScale: { borderColor: '#30363d' },
-      timeScale: { borderColor: '#30363d', timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: colors.border },
+      timeScale: { borderColor: colors.border, timeVisible: true, secondsVisible: false },
       crosshair: { mode: 0 },
     })
     chartRef.current = chart
 
     const candleSeries = chart.addCandlestickSeries({
-      upColor: '#f85149',
-      downColor: '#3fb950',
-      borderUpColor: '#f85149',
-      borderDownColor: '#3fb950',
-      wickUpColor: '#f85149',
-      wickDownColor: '#3fb950',
+      upColor: colors.up,
+      downColor: colors.down,
+      borderUpColor: colors.up,
+      borderDownColor: colors.down,
+      wickUpColor: colors.up,
+      wickDownColor: colors.down,
     })
 
     let ma5: ISeriesApi<'Line'> | null = null
     let ma10: ISeriesApi<'Line'> | null = null
     let ma20: ISeriesApi<'Line'> | null = null
     if (showMa) {
-      ma5 = chart.addLineSeries({ color: '#e0b15a', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-      ma10 = chart.addLineSeries({ color: '#5b9fd4', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-      ma20 = chart.addLineSeries({ color: '#c4a8f0', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+      ma5 = chart.addLineSeries({ color: colors.warn, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+      ma10 = chart.addLineSeries({ color: colors.accent, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+      ma20 = chart.addLineSeries({ color: colors.purple, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
     }
 
     let volChart: IChartApi | null = null
@@ -122,14 +124,14 @@ export function PriceChart({ candles, height = 360, indicators = ['ma', 'vol'] }
         height: subH,
         layout: {
           background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#8b949e',
+          textColor: colors.text,
         },
         grid: {
-          vertLines: { color: 'rgba(48,54,61,0.4)' },
-          horzLines: { color: 'rgba(48,54,61,0.4)' },
+          vertLines: { color: colors.gridSoft },
+          horzLines: { color: colors.gridSoft },
         },
-        rightPriceScale: { borderColor: '#30363d' },
-        timeScale: { borderColor: '#30363d', visible: false },
+        rightPriceScale: { borderColor: colors.border },
+        timeScale: { borderColor: colors.border, visible: false },
         crosshair: { mode: 0 },
       })
       volSeries = volChart.addHistogramSeries({
@@ -149,19 +151,19 @@ export function PriceChart({ candles, height = 360, indicators = ['ma', 'vol'] }
         height: subH,
         layout: {
           background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: '#8b949e',
+          textColor: colors.text,
         },
         grid: {
-          vertLines: { color: 'rgba(48,54,61,0.4)' },
-          horzLines: { color: 'rgba(48,54,61,0.4)' },
+          vertLines: { color: colors.gridSoft },
+          horzLines: { color: colors.gridSoft },
         },
-        rightPriceScale: { borderColor: '#30363d' },
-        timeScale: { borderColor: '#30363d', visible: false },
+        rightPriceScale: { borderColor: colors.border },
+        timeScale: { borderColor: colors.border, visible: false },
         crosshair: { mode: 0 },
       })
       histSeries = macdChart.addHistogramSeries({ priceLineVisible: false, lastValueVisible: false })
-      difSeries = macdChart.addLineSeries({ color: '#5b9fd4', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
-      deaSeries = macdChart.addLineSeries({ color: '#e0b15a', lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+      difSeries = macdChart.addLineSeries({ color: colors.accent, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
+      deaSeries = macdChart.addLineSeries({ color: colors.warn, lineWidth: 1, priceLineVisible: false, lastValueVisible: false })
       macdChartRef.current = macdChart
     }
 
@@ -196,23 +198,25 @@ export function PriceChart({ candles, height = 360, indicators = ['ma', 'vol'] }
         )
       }
       if (volSeries) {
+        const c = getChartThemeColors()
         volSeries.setData(
-          candles.map((c) => ({
-            time: parseTime(c.time),
-            value: c.volume,
-            color: c.close >= c.open ? 'rgba(248,81,73,0.55)' : 'rgba(63,185,80,0.55)',
+          candles.map((bar) => ({
+            time: parseTime(bar.time),
+            value: bar.volume,
+            color: bar.close >= bar.open ? c.upSoft : c.downSoft,
           })),
         )
       }
       if (difSeries && deaSeries && histSeries) {
         const { dif, dea, hist } = macdSeries(closes)
-        difSeries.setData(candles.map((c, i) => ({ time: parseTime(c.time), value: dif[i] })))
-        deaSeries.setData(candles.map((c, i) => ({ time: parseTime(c.time), value: dea[i] })))
+        const c = getChartThemeColors()
+        difSeries.setData(candles.map((bar, i) => ({ time: parseTime(bar.time), value: dif[i] })))
+        deaSeries.setData(candles.map((bar, i) => ({ time: parseTime(bar.time), value: dea[i] })))
         histSeries.setData(
-          candles.map((c, i) => ({
-            time: parseTime(c.time),
+          candles.map((bar, i) => ({
+            time: parseTime(bar.time),
             value: hist[i],
-            color: hist[i] >= 0 ? 'rgba(248,81,73,0.55)' : 'rgba(63,185,80,0.55)',
+            color: hist[i] >= 0 ? c.upSoft : c.downSoft,
           })),
         )
       }
@@ -234,6 +238,37 @@ export function PriceChart({ candles, height = 360, indicators = ['ma', 'vol'] }
     }
     chart.timeScale().subscribeVisibleLogicalRangeChange(sync)
 
+    const applyThemeColors = () => {
+      const c = getChartThemeColors()
+      const layoutOpts = {
+        layout: { background: { type: ColorType.Solid, color: 'transparent' as const }, textColor: c.text },
+        grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
+        rightPriceScale: { borderColor: c.border },
+        timeScale: { borderColor: c.border },
+      }
+      chart.applyOptions(layoutOpts)
+      candleSeries.applyOptions({
+        upColor: c.up, downColor: c.down,
+        borderUpColor: c.up, borderDownColor: c.down,
+        wickUpColor: c.up, wickDownColor: c.down,
+      })
+      volChart?.applyOptions({
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: c.text },
+        grid: { vertLines: { color: c.gridSoft }, horzLines: { color: c.gridSoft } },
+        rightPriceScale: { borderColor: c.border },
+        timeScale: { borderColor: c.border },
+      })
+      macdChart?.applyOptions({
+        layout: { background: { type: ColorType.Solid, color: 'transparent' }, textColor: c.text },
+        grid: { vertLines: { color: c.gridSoft }, horzLines: { color: c.gridSoft } },
+        rightPriceScale: { borderColor: c.border },
+        timeScale: { borderColor: c.border },
+      })
+      // refresh vol/macd bar colors
+      applyData()
+    }
+    const unsubTheme = subscribeThemeChange(() => applyThemeColors())
+
     const ro = new ResizeObserver(() => {
       if (ref.current) chart.applyOptions({ width: ref.current.clientWidth })
       if (volRef.current && volChart) volChart.applyOptions({ width: volRef.current.clientWidth })
@@ -242,6 +277,7 @@ export function PriceChart({ candles, height = 360, indicators = ['ma', 'vol'] }
     ro.observe(ref.current)
 
     return () => {
+      unsubTheme()
       ro.disconnect()
       chart.remove()
       volChart?.remove()

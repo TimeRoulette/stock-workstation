@@ -174,7 +174,7 @@ export interface JournalNote {
 export interface AppSettings {
   quoteProvider: QuoteProviderMode
   refreshIntervalSec: number
-  theme: 'dark'
+  theme: 'light' | 'dark'
   locale: 'zh-CN'
   coachDismissed: boolean
   /** 免打扰开始小时 0–23；与 muteEndHour 相同表示关闭 */

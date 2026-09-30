@@ -5,15 +5,19 @@ import { getProviderHealth, quoteService } from '../services/quotes'
 import { getScreenerHealth, probeScreener } from '../services/screener'
 import { fmtDateTime } from '../utils/format'
 import type { AppSettings, ProviderHealth, QuoteProviderMode } from '../types'
+import { ThemeToggle } from '../components/ThemeToggle'
+import type { ThemeMode } from '../utils/theme'
 
 interface Props {
   settings: AppSettings
   onChange: (s: AppSettings) => void
   onShowCoach?: () => void
   onShowShortcuts?: () => void
+  theme?: ThemeMode
+  onThemeChange?: (theme: ThemeMode) => void
 }
 
-export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts }: Props) {
+export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts, theme, onThemeChange }: Props) {
   const [msg, setMsg] = useState<string | null>(null)
   const [health, setHealth] = useState<ProviderHealth[]>([])
   const [screenerHealth, setScreenerHealth] = useState<ProviderHealth | null>(null)
@@ -313,6 +317,23 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
         </div>
 
         <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">外观主题</div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              日间浅色 / 夜间深色。首次跟随系统，手动切换后记住你的选择。
+            </p>
+            <ThemeToggle
+              variant="full"
+              theme={theme ?? settings.theme}
+              onChange={(th) => {
+                onThemeChange?.(th)
+                onChange({ ...settings, theme: th })
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginBottom: 16 }}>
           <div className="panel-header">行情与刷新</div>
           <div className="panel-body">
             <div className="form-row">
@@ -503,7 +524,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts 
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.6.2 · 简单 UX，更深功能
+              <strong>股票工作台</strong> v0.9.1 · 简单 UX，更深功能
             </p>
             <p className="muted">
               运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}
