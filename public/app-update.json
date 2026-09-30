@@ -4,17 +4,12 @@
     "minVersion": "0.11.0",
     "apkUrl": "https://github.com/TimeRoulette/stock-workstation/releases/download/android-debug-latest/stock-workstation-0.12.4-debug.apk",
     "releasePage": "https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest",
-    "publishedAt": "2026-09-30T03:10:40Z",
+    "publishedAt": "2026-09-30T11:11:03+08:00",
     "changelog": [
-      "Android debug APK v0.12.4（含应用内检查更新；soft Release）",
-      "feat(v0.12.4): 各功能板块新手术语 Glossary 全覆盖",
-      "chore(android): restore readable v0.12.3 changelog [skip android]",
-      "chore(android): refresh app-update.json for v0.12.3 [skip android]",
-      "feat(v0.12.3): 设置折叠、LLM 供应商预设、修复系统通知勾选",
-      "chore(android): refresh app-update.json for v0.12.2 [skip android]",
-      "fix(v0.12.2): 减少误落演示——同花顺优先、中继与原生 HTTP",
-      "chore(android): clarify app-update changelog wording [skip android]",
-      "fix(android): 补全 app-update changelog，CI 加深 fetch-depth [skip android]"
+      "各功能板块补齐可展开「术语/新手解释」（盯盘/量监/选股/模拟/实盘/日报/复盘/设置），风格对齐图表术语",
+      "Glossary 集中词条：名词→含义→本应用用法；默认折叠；标明非投资建议",
+      "图表术语扩展 DIF/DEA；模拟术语覆盖挂单/绩效/费率；设置术语覆盖最新/延时/旧行情/演示、LLM、通知、备份、更新",
+      "Android debug APK v0.12.4（含应用内检查更新；soft Release）"
     ]
   }
 }
