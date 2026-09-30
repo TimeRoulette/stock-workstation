@@ -11,121 +11,30 @@ import type {
 import * as db from './db'
 import { getBriefHealth, probeBriefSources } from './briefNews'
 
-/** 内部统一代码：600519.SH / 000001.SZ / 00700.HK / AAPL */
-export function normalizeSymbol(raw: string): { symbol: string; market: Market } {
-  let s = raw.trim().toUpperCase().replace(/\s+/g, '')
-  if (!s) return { symbol: '', market: 'US' }
+import {
+  normalizeSymbol,
+  toYahooSymbol,
+  toEastmoneySecid,
+  toSinaListCode,
+  detectMarket,
+  currencyFor,
+  lotSize,
+  sourceBadgeLabel,
+  FX_HINT,
+  toCnyHint,
+} from './quoteSymbols'
 
-  const prefix = s.match(/^(SH|SZ|HK)(\d{1,6})$/)
-  if (prefix) {
-    const m = prefix[1] as Market
-    const code = prefix[2]
-    if (m === 'HK') return { symbol: `${code.padStart(5, '0')}.HK`, market: 'HK' }
-    return { symbol: `${code.padStart(6, '0')}.${m}`, market: m }
-  }
-
-  if (s.endsWith('.SH') || s.endsWith('.SS')) {
-    const code = s.replace(/\.(SH|SS)$/, '').padStart(6, '0')
-    return { symbol: `${code}.SH`, market: 'SH' }
-  }
-  if (s.endsWith('.SZ')) {
-    const code = s.replace(/\.SZ$/, '').padStart(6, '0')
-    return { symbol: `${code}.SZ`, market: 'SZ' }
-  }
-  if (s.endsWith('.HK')) {
-    const code = s.replace(/\.HK$/, '').replace(/^0+/, '') || '0'
-    return { symbol: `${code.padStart(5, '0')}.HK`, market: 'HK' }
-  }
-
-  if (/^\d{6}$/.test(s)) {
-    if (s.startsWith('6') || s.startsWith('9')) return { symbol: `${s}.SH`, market: 'SH' }
-    return { symbol: `${s}.SZ`, market: 'SZ' }
-  }
-
-  if (/^\d{4,5}$/.test(s)) {
-    return { symbol: `${s.padStart(5, '0')}.HK`, market: 'HK' }
-  }
-
-  return { symbol: s, market: 'US' }
-}
-
-export function toYahooSymbol(symbol: string): string {
-  const { symbol: s, market } = normalizeSymbol(symbol)
-  if (market === 'SH') return s.replace('.SH', '.SS')
-  if (market === 'SZ') return s
-  if (market === 'HK') {
-    const code = s.replace('.HK', '').replace(/^0+/, '') || '0'
-    return `${code.padStart(4, '0')}.HK`
-  }
-  return s
-}
-
-export function toEastmoneySecid(symbol: string): string | null {
-  const { symbol: s, market } = normalizeSymbol(symbol)
-  if (market === 'SH') return `1.${s.replace('.SH', '')}`
-  if (market === 'SZ') return `0.${s.replace('.SZ', '')}`
-  if (market === 'HK') {
-    const code = s.replace('.HK', '').replace(/^0+/, '') || '0'
-    return `116.${code.padStart(5, '0')}`
-  }
-  return null
-}
-
-export function toSinaListCode(symbol: string): string | null {
-  const { symbol: s, market } = normalizeSymbol(symbol)
-  if (market === 'SH') return `sh${s.replace('.SH', '')}`
-  if (market === 'SZ') return `sz${s.replace('.SZ', '')}`
-  if (market === 'HK') {
-    const code = s.replace('.HK', '').replace(/^0+/, '') || '0'
-    return `rt_hk${code.padStart(5, '0')}`
-  }
-  return null
-}
-
-export function detectMarket(symbol: string): Market {
-  return normalizeSymbol(symbol).market
-}
-
-export function currencyFor(symbol: string): string {
-  const m = detectMarket(symbol)
-  if (m === 'HK') return 'HKD'
-  if (m === 'US') return 'USD'
-  return 'CNY'
-}
-
-export function lotSize(symbol: string): number {
-  const m = detectMarket(symbol)
-  return m === 'SH' || m === 'SZ' ? 100 : 1
-}
-
-export function sourceBadgeLabel(source: QuoteSource): string {
-  switch (source) {
-    case 'eastmoney':
-      return '东财'
-    case 'sina':
-      return '新浪'
-    case 'ths':
-      return '同花顺'
-    case 'yahoo':
-      return 'Yahoo'
-    case 'cache':
-      return '缓存'
-    default:
-      return '模拟'
-  }
-}
-
-/** 简单 FX 提示（非实时汇率，仅展示用） */
-export const FX_HINT: Record<string, { vsCny: number; note: string }> = {
-  CNY: { vsCny: 1, note: '记账本位币' },
-  HKD: { vsCny: 0.92, note: '示意汇率 ≈0.92，非实时' },
-  USD: { vsCny: 7.2, note: '示意汇率 ≈7.2，非实时' },
-}
-
-export function toCnyHint(amount: number, currency: string): string {
-  const fx = FX_HINT[currency] || FX_HINT.CNY
-  if (currency === 'CNY') return ''
-  return `≈¥${(amount * fx.vsCny).toFixed(0)}（${fx.note}）`
+export {
+  normalizeSymbol,
+  toYahooSymbol,
+  toEastmoneySecid,
+  toSinaListCode,
+  detectMarket,
+  currencyFor,
+  lotSize,
+  sourceBadgeLabel,
+  FX_HINT,
+  toCnyHint,
 }
 
 const BASE_PRICES: Record<string, { price: number; name: string }> = {
@@ -1301,65 +1210,4 @@ export {
   aggregateBrief,
 } from './briefNews'
 
-/** 检查价格/成交量提醒是否触发（尊重免打扰时段与稍后）
- *  @param rvolMap 可选：symbol → RVOL，用于 type==='rvol_above'
- */
-export function evaluateAlerts(
-  quotes: Record<string, Quote>,
-  rvolMap?: Record<string, number>,
-): Array<{ alertId: number; message: string }> {
-  const fired: Array<{ alertId: number; message: string }> = []
-  try {
-    if (db.isInMuteHours()) return fired
-  } catch {
-    /* */
-  }
-  let alerts
-  try {
-    alerts = db.listEnabledAlerts()
-  } catch {
-    return fired
-  }
-  const now = Date.now()
-  for (const a of alerts) {
-    if (a.snoozedUntil) {
-      const until = new Date(a.snoozedUntil).getTime()
-      if (Number.isFinite(until) && until > now) continue
-    }
-    let hit = false
-    let detail = ''
-    if (a.type === 'rvol_above') {
-      const rvol = rvolMap?.[a.symbol]
-      if (rvol == null || !Number.isFinite(rvol)) continue
-      if (rvol >= a.threshold) {
-        hit = true
-        detail = `RVOL ${rvol.toFixed(2)}× ≥ ${a.threshold}×`
-      }
-    } else {
-      const q = quotes[a.symbol]
-      if (!q) continue
-      if (a.type === 'above' && q.price >= a.threshold) {
-        hit = true
-        detail = `现价 ${q.price} ≥ ${a.threshold}`
-      } else if (a.type === 'below' && q.price <= a.threshold) {
-        hit = true
-        detail = `现价 ${q.price} ≤ ${a.threshold}`
-      } else if (a.type === 'pct_change' && Math.abs(q.changePercent) >= Math.abs(a.threshold)) {
-        hit = true
-        detail = `涨跌幅 ${q.changePercent}%（阈值 ±${a.threshold}%）`
-      }
-    }
-    if (hit) {
-      try {
-        db.markAlertTriggered(a.id)
-      } catch {
-        /* */
-      }
-      fired.push({
-        alertId: a.id,
-        message: `提醒：${a.name || a.symbol} ${detail}`,
-      })
-    }
-  }
-  return fired
-}
+export { evaluateAlerts } from './alertEval'

@@ -7,6 +7,7 @@ import { WatchlistPage } from './pages/WatchlistPage'
 import { VolumePage } from './pages/VolumePage'
 import { ScreenerPage } from './pages/ScreenerPage'
 import { PortfolioPage } from './pages/PortfolioPage'
+import { LivePage } from './pages/LivePage'
 import { BriefPage } from './pages/BriefPage'
 import { JournalPage } from './pages/JournalPage'
 import { SettingsPage } from './pages/SettingsPage'
@@ -22,9 +23,10 @@ const PAGE_BY_KEY: Record<string, PageKey> = {
   '2': 'volume',
   '3': 'screener',
   '4': 'portfolio',
-  '5': 'brief',
-  '6': 'journal',
-  '7': 'settings',
+  '5': 'live',
+  '6': 'brief',
+  '7': 'journal',
+  '8': 'settings',
 }
 
 const PAGE_LABEL: Record<PageKey, string> = {
@@ -32,6 +34,7 @@ const PAGE_LABEL: Record<PageKey, string> = {
   volume: '量监',
   screener: '选股',
   portfolio: '模拟',
+  live: '实盘',
   brief: '日报',
   journal: '复盘',
   settings: '设置',
@@ -66,6 +69,9 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
     volumeLookback: 20,
     defaultRvolAlert: 2,
     notifyEnabled: false,
+    electronOpenAtLogin: false,
+    electronMinimizeToTray: false,
+    llmSummaryEnabled: false,
   })
   const [bootError, setBootError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -127,6 +133,17 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
         refreshAlertCount()
         setDataStatus(summarizeDataStatus([], { providerMode: s.quoteProvider }))
         setReady(true)
+        // Electron：同步托盘/开机偏好到主进程
+        try {
+          if (window.stockWorkstation?.isElectron) {
+            void window.stockWorkstation.setMinimizeToTray?.(!!s.electronMinimizeToTray)
+            if (s.electronOpenAtLogin) {
+              void window.stockWorkstation.setOpenAtLogin?.(true)
+            }
+          }
+        } catch {
+          /* */
+        }
       })
       .catch((e) => {
         setBootError(e instanceof Error ? e.message : '数据库初始化失败')
@@ -290,6 +307,16 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
             refreshSec={settings.refreshIntervalSec}
             onToast={pushToast}
             prefillSymbol={portfolioSymbol}
+          />
+        )}
+        {page === 'live' && (
+          <LivePage
+            refreshSec={settings.refreshIntervalSec}
+            onToast={pushToast}
+            onOpenJournal={(sym) => {
+              setFocusSymbol(sym)
+              navigate('journal')
+            }}
           />
         )}
         {page === 'brief' && (

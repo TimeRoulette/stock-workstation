@@ -1,8 +1,8 @@
 {
   "name": "stock-workstation",
   "productName": "股票工作台",
-  "version": "0.10.0",
-  "description": "跨平台个人股票工作台 — 盯盘/指标/提醒、模拟交易、日报、复盘（东财/新浪/同花顺/Yahoo/模拟）",
+  "version": "0.11.0",
+  "description": "跨平台个人股票工作台 — 盯盘/指标/提醒、模拟与实盘分析、日报、复盘（东财/新浪/同花顺/Yahoo/模拟）",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -16,7 +16,11 @@
     "electron:build:mac": "npm run build && electron-builder --mac",
     "electron:build:linux": "npm run build && electron-builder --linux",
     "validate": "node scripts/validate-tech.mjs",
-    "test": "npm run validate"
+    "test": "npm run validate",
+    "android:add": "npx -y @capacitor/cli@6 add android",
+    "android:sync": "npm run build && npx -y @capacitor/cli@6 sync android",
+    "android:apk": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:open": "npx -y @capacitor/cli@6 open android"
   },
   "dependencies": {
     "lightweight-charts": "^4.2.1",

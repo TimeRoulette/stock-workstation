@@ -4,7 +4,7 @@ interface Props {
 }
 
 const ROWS: Array<{ keys: string; desc: string }> = [
-  { keys: '1–7', desc: '盯盘 / 量监 / 选股 / 模拟 / 日报 / 复盘 / 设置' },
+  { keys: '1–8', desc: '盯盘 / 量监 / 选股 / 模拟 / 实盘 / 日报 / 复盘 / 设置' },
   { keys: 'R', desc: '刷新当前页行情（盯盘/量监/选股/模拟）' },
   { keys: 'N', desc: '聚焦「添加自选」输入框' },
   { keys: '?', desc: '显示 / 关闭本快捷键提示' },

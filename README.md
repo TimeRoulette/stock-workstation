@@ -2,7 +2,7 @@
 
 跨平台个人股票工作台：盯盘自选、指标图表、价格提醒、模拟持仓、日报简报、复盘笔记。本地优先（SQLite / sql.js），中文界面，无需 API Key。
 
-**当前版本：v0.10.0** — 限价挂单 · 止损提醒 · 简易绩效 · 早盘价量表 · 复盘模板 · Sparkline · PWA 单窗口 · 外链复用。
+**当前版本：v0.11.0** — 实盘分析 · 工程拆分 · 规则单测扩展 · Electron 托盘/开机可选 · 无障碍 · 可选本机 LLM · Android 脚手架。
 
 ## 30 秒上手
 
@@ -19,14 +19,18 @@ npm run dev
 3. 用提醒模板「现价 +3% / −3% / 涨跌≥5%」一键设提醒  
 4. 成交后可跳转 **复盘**，自动生成草稿  
 
-按 `?` 查看键盘快捷键（`1`–`7` 切页，`N` 聚焦添加，`R` 刷新行情）。
+按 `?` 查看键盘快捷键（`1`–`8` 切页，`N` 聚焦添加，`R` 刷新行情）。
 
+
+## 截图
+
+`screenshots/` 保留核心流程示意（盯盘 / 模拟 / 复盘 / 设置健康）。界面文案与侧栏以 **v0.11** 为准（含「实盘」页）；若示意截图仍为较早版本布局，以线上演示为准。
 
 ## 在线演示（GitHub Pages）
 
 部署后访问（把 `USER` / `REPO` 换成你的账号与仓库名）：
 
-**https://USER.github.io/REPO/**
+**https://timeroulette.github.io/stock-workstation/**（把 USER/REPO 换成你的亦可）
 
 ### 启用 Pages（Actions 源）
 
@@ -41,7 +45,7 @@ npm run dev
 VITE_BASE=/REPO/ npm run build
 ```
 
-## 功能一览（v0.10）
+## 功能一览（v0.11）
 
 | 能力 | 说明 |
 |------|------|
@@ -52,6 +56,7 @@ VITE_BASE=/REPO/ npm run build
 | 一键买入 | 图表旁市价模拟买入，确认后可进复盘草稿 |
 | 提醒 | 模板一键 + 稍后/免打扰；监听中 / 已触发分栏 |
 | 模拟 | 市价立即成交 · **限价待成交队列** · 止损触及提醒/演示平仓 · **简易绩效**（胜率/回撤/相对基准）· 净值曲线、CSV |
+| **实盘** | **手动导入**真实成交/持仓（CSV/粘贴）· 与模拟隔离 · 成本/浮动/已实现/胜率/回撤示意/集中度/近期回顾 · 导出 MD/CSV · **非券商对接** |
 | CSV 重算 | 导入可选按成交回放现金；一键修复现金漂移 |
 | 日报 | 早盘分区 · **结构化汇总分析**（着色强调）· **自选价量+新闻命中表** · 外链窗口复用 · 多源聚合 |
 | 复盘 | 结构化模板（计划/情绪/偏差/教训/标签）· 筛选 · 导出 MD/CSV · 关联成交 |
@@ -67,6 +72,8 @@ npm run electron:build:win    # / mac / linux
 ```
 
 > 本 Linux 开发机缺少 Tauri 所需 webkit2gtk 且无 sudo，故采用 Electron。Windows / macOS 包请在对应系统或 CI 上打。
+
+设置页可开 **关闭时最小化到托盘**、**开机自启**（macOS/Windows 较稳；部分 Linux 桌面 Tray/Login Item 无效——属平台限制）。可选 **LLM 总结**（默认关；API Key 仅 Electron userData，不进 Pages 包）。
 
 ## 行情源
 
@@ -133,11 +140,13 @@ stock-workstation/
 ├── .github/workflows/ # Pages 构建与部署
 ├── electron/
 ├── src/
-│   ├── pages/         # 盯盘 / 量监 / 模拟 / 日报 / 复盘 / 设置
+│   ├── pages/         # 盯盘 / 量监 / 选股 / 模拟 / 实盘 / 日报 / 复盘 / 设置
 │   ├── components/    # 侧栏、K 线、对比图、骨架屏、引导…
-│   ├── services/      # db.ts、quotes.ts
+│   ├── services/      # db、quotes、liveAnalysis、briefNews…
 │   ├── utils/         # 安全数值格式化
 │   └── styles/
+├── docs/android.md    # 安卓安装结论与打 APK 说明
+├── capacitor.config.ts
 ├── dist/              # npm run build 输出（Pages 产物）
 └── README.md
 ```
@@ -150,6 +159,18 @@ stock-workstation/
 | `npm run build` | 类型检查 + 生产构建 |
 | `npm run electron:dev` | Electron + Vite |
 | `npm run electron:build:win/mac/linux` | 对应平台包 |
+| `npm run validate` | 技术选股 / 绩效规则自检 |
+| `npm run android:add` / `android:sync` | Capacitor 安卓工程（需本机 SDK 或用 Actions） |
+
+## 变更摘要 · v0.11.0
+
+- **实盘分析**：侧栏「实盘」；CSV/粘贴/手记导入真实成交；与模拟盘隔离；成本、浮动/已实现盈亏、胜率、回撤示意、集中度、近期回顾；导出 MD/CSV；明确非券商/非投资建议
+- **工程拆分**：`quoteSymbols` / `alertEval` / 选股 `helpers`；行为保持
+- **规则单测扩展**：`validate-tech` 覆盖主升均线、MACD 正负例、FIFO 胜率、回撤、集中度等
+- **Electron**：托盘、关闭驻留、开机自启（平台不支持时如实说明）
+- **无障碍**：`prefers-reduced-motion`、表格键盘焦点、对比度微调；移动端全市场扫描降级引导加强
+- **可选 LLM**：默认关；Key 仅 Electron userData；Pages 无 Key 入口
+- **Android**：README/`docs/android.md` 路径对比；Capacitor 脚手架 + Actions 打 debug APK artifact（不承诺上架）
 
 ## 变更摘要 · v0.10.0
 
@@ -227,6 +248,14 @@ stock-workstation/
 - 日报：提及当前模拟持仓；芯片可跳盯盘/模拟  
 - 加载骨架、确认文案打磨  
 
+## Android
+
+详见 **[docs/android.md](./docs/android.md)**。摘要：
+
+1. **日常推荐 PWA**「添加到主屏幕」（已有 manifest），零打包最稳。
+2. **Capacitor** 可包 debug APK（打开 Pages 或内置 `dist`）；本机需 Android SDK；**GitHub Actions → Build Android Debug APK** 上传 artifact `stock-workstation-debug-apk`。
+3. **Electron 不能出安卓**。不承诺应用商店上架；签名为 debug。
+
 ## 限制与声明
 
 - 公开行情常延迟；分钟线依赖源是否返回数据  
@@ -239,4 +268,7 @@ stock-workstation/
 - 限价撮合与止损自动平仓均为**演示规则**，非真实券商撮合
 - 绩效与基准对比仅供研究，非券商对账单
 - PWA/命名窗口无法保证任意外链 100% 合并到同一浏览器标签
+- 实盘数据为用户手动导入，仅本地存储；非券商对接，不做未授权爬取登录
+- LLM Key 仅 Electron 本机存储，不会进入 GitHub Pages 构建产物
+- Android debug APK 仅供自测，非商店发行版
 - 本工具仅供个人学习，**不构成投资建议**

@@ -70,6 +70,33 @@ export interface Trade {
   ts: string
 }
 
+
+/** 实盘手动导入成交（与模拟 trades 表隔离） */
+export interface LiveTrade {
+  id: number
+  /** 成交日期 ISO */
+  ts: string
+  symbol: string
+  name: string
+  side: TradeSide
+  qty: number
+  price: number
+  fee: number
+  note: string
+  createdAt: string
+}
+
+export interface LiveTradeInput {
+  ts: string
+  symbol: string
+  name?: string
+  side: TradeSide
+  qty: number
+  price: number
+  fee?: number
+  note?: string
+}
+
 export interface TradeFilter {
   side?: TradeSide | 'all'
   symbol?: string
@@ -212,6 +239,12 @@ export interface AppSettings {
   defaultRvolAlert: number
   /** 是否启用系统通知（需浏览器/Electron 授权） */
   notifyEnabled: boolean
+  /** Electron：开机自启（仅桌面壳） */
+  electronOpenAtLogin: boolean
+  /** Electron：关闭时最小化到托盘 */
+  electronMinimizeToTray: boolean
+  /** 可选 LLM 总结（默认关；Key 仅本机/Electron） */
+  llmSummaryEnabled: boolean
 }
 
 export interface QuoteProvider {

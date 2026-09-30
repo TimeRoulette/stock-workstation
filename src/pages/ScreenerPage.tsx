@@ -42,6 +42,7 @@ import {
 } from '../services/scanSnapshot'
 import { isPagesHost } from '../utils/dataStatus'
 import { Icons } from '../components/Icon'
+import { BOARD_KIND_TABS, MARKET_TABS, RoleBadge, fmtAmt, fmtVol } from './screener/helpers'
 
 interface Props {
   onToast?: (t: Omit<ToastItem, 'id'>) => void
@@ -50,36 +51,6 @@ interface Props {
 
 type MainTab = 'stocks' | 'boards' | 'tech'
 
-function fmtVol(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '—'
-  if (n >= 1e8) return `${(n / 1e8).toFixed(2)}亿`
-  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`
-  return fmt(n, 0)
-}
-
-function fmtAmt(n: number): string {
-  if (!Number.isFinite(n) || n <= 0) return '—'
-  if (n >= 1e8) return `${(n / 1e8).toFixed(2)}亿`
-  if (n >= 1e4) return `${(n / 1e4).toFixed(1)}万`
-  return fmt(n, 0)
-}
-
-const MARKET_TABS: Array<{ key: ScreenerMarketTab; label: string }> = [
-  { key: 'A', label: 'A股' },
-  { key: 'HK', label: '港股' },
-  { key: 'US', label: '美股' },
-]
-
-const BOARD_KIND_TABS: Array<{ key: BoardKind; label: string }> = [
-  { key: 'industry', label: '行业' },
-  { key: 'concept', label: '概念' },
-]
-
-function RoleBadge({ role }: { role: BoardConstituent['role'] }) {
-  if (role === 'leader') return <span className="role-badge role-leader" title="龙头">龙头</span>
-  if (role === 'mid') return <span className="role-badge role-mid" title="中军">中军</span>
-  return null
-}
 
 export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
   const [mainTab, setMainTab] = useState<MainTab>('stocks')
@@ -865,7 +836,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                   </div>
                 </div>
                 {techScope === 'full' && (
-                  <div className="state-banner warn" style={{ marginBottom: 8 }}>
+                  <div className="state-banner warn mobile-full-market-guide" style={{ marginBottom: 8 }}>
                     全市场扫描慢（A 股约 10–20 分钟），公开站受 CORS/中继限制易失败。推荐本机或 Electron；也可先用前{SCREENER_MAX_ROWS}/自选/板块。
                     {pagesHost && !isElectron ? ' 当前为公开站环境。' : ''}
                   </div>

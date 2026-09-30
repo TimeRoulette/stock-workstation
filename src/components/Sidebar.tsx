@@ -10,6 +10,7 @@ export type PageKey =
   | 'volume'
   | 'screener'
   | 'portfolio'
+  | 'live'
   | 'brief'
   | 'journal'
   | 'settings'
@@ -24,6 +25,7 @@ const NAV: Array<{
   { key: 'volume', label: '量监', Icon: Icons.volume, hint: 'RVOL · 放量' },
   { key: 'screener', label: '选股', Icon: Icons.screener, hint: '涨跌幅排名' },
   { key: 'portfolio', label: '模拟', Icon: Icons.portfolio, hint: '纸上交易 · CSV' },
+  { key: 'live', label: '实盘', Icon: Icons.live, hint: '真实成交分析' },
   { key: 'brief', label: '日报', Icon: Icons.brief, hint: '简报 · 持仓关联' },
   { key: 'journal', label: '复盘', Icon: Icons.journal, hint: '交易笔记' },
   { key: 'settings', label: '设置', Icon: Icons.settings, hint: '健康 · 快捷键' },
@@ -90,7 +92,7 @@ export function Sidebar({
           {!collapsed && (
             <div className="brand-text">
               <h1>股票工作台</h1>
-              <p>v0.10.0 · 本地优先</p>
+              <p>v0.11.0 · 本地优先</p>
             </div>
           )}
           <button
@@ -158,7 +160,7 @@ export function Sidebar({
               <div className="brand-mark">股</div>
               <div className="brand-text">
                 <h1>股票工作台</h1>
-                <p>v0.10.0 · 本地优先</p>
+                <p>v0.11.0 · 本地优先</p>
               </div>
               <button
                 type="button"

@@ -21,6 +21,12 @@ import {
 } from '../services/notify'
 import { Icons } from '../components/Icon'
 import { isPagesHost } from '../utils/dataStatus'
+import {
+  isLlmFeatureAvailable,
+  loadLlmKey,
+  saveLlmKey,
+  summarizeWithUserLlm,
+} from '../services/llmSummary'
 
 interface Props {
   settings: AppSettings
@@ -45,12 +51,23 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
   const fileRef = useRef<HTMLInputElement>(null)
   const [notifyPerm, setNotifyPerm] = useState(() => getNotifyPermission())
   const [importBusy, setImportBusy] = useState(false)
+  const [llmKey, setLlmKey] = useState('')
+  const [llmBusy, setLlmBusy] = useState(false)
+  const [llmTestOut, setLlmTestOut] = useState<string | null>(null)
 
   useEffect(() => {
     setHealth(getProviderHealth())
     setScreenerHealth(getScreenerHealth())
     // 进入设置页自动轻量刷新缓存/模拟状态，并异步探测
     void probe(true)
+    if (isElectron && window.stockWorkstation?.getLlmKey) {
+      void loadLlmKey().then(setLlmKey)
+      void window.stockWorkstation.getOpenAtLogin?.().then((r) => {
+        if (r.openAtLogin !== settings.electronOpenAtLogin) {
+          /* sync display from OS */
+        }
+      })
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -478,6 +495,149 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                 <option value={3.5}>3.5×（爆量）</option>
               </select>
             </div>
+          </div>
+        </div>
+
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">桌面端（Electron）</div>
+          <div className="panel-body">
+            {!isElectron ? (
+              <p className="muted" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 0 }}>
+                当前为浏览器 / GitHub Pages。托盘、开机自启仅在 <code>npm run electron:dev</code> 或桌面包中可用。
+                Linux 部分桌面环境对系统托盘支持不完整；开机自启依赖 Electron Login Item，部分发行版无效——属平台限制，非假实现。
+              </p>
+            ) : (
+              <>
+                <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+                  托盘：关闭窗口时可最小化到托盘（若桌面环境支持 Tray）。开机自启：macOS/Windows 较稳；Linux 视桌面而定。
+                </p>
+                <div className="form-row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={settings.electronMinimizeToTray}
+                      onChange={async (e) => {
+                        const v = e.target.checked
+                        db.setSetting('electronMinimizeToTray', v ? '1' : '0')
+                        onChange({ ...settings, electronMinimizeToTray: v })
+                        await window.stockWorkstation?.setMinimizeToTray?.(v)
+                        setMsg(v ? '已开启：关闭时最小化到托盘' : '已关闭托盘驻留')
+                      }}
+                    />{' '}
+                    关闭时最小化到托盘
+                  </label>
+                </div>
+                <div className="form-row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={settings.electronOpenAtLogin}
+                      onChange={async (e) => {
+                        const v = e.target.checked
+                        const r = await window.stockWorkstation?.setOpenAtLogin?.(v)
+                        if (r && r.ok === false) {
+                          setMsg(`开机自启设置失败：${r.error || '平台不支持'}`)
+                          return
+                        }
+                        db.setSetting('electronOpenAtLogin', v ? '1' : '0')
+                        onChange({ ...settings, electronOpenAtLogin: v })
+                        setMsg(v ? '已请求开机自启' : '已关闭开机自启')
+                      }}
+                    />{' '}
+                    开机时启动
+                  </label>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">可选 LLM 总结（默认关闭）</div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              用你自备的 OpenAI 兼容 API Key 对复盘/分析文本做短总结。Key <strong>仅存 Electron userData</strong>，
+              <strong>绝不</strong>打进 GitHub Pages 静态包；浏览器站不提供 Key 输入。
+            </p>
+            {!isLlmFeatureAvailable() ? (
+              <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
+                当前环境不可配置 Key。请使用桌面 Electron 壳。
+              </p>
+            ) : (
+              <>
+                <div className="form-row">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={settings.llmSummaryEnabled}
+                      onChange={(e) => {
+                        const v = e.target.checked
+                        db.setSetting('llmSummaryEnabled', v ? '1' : '0')
+                        onChange({ ...settings, llmSummaryEnabled: v })
+                        setMsg(v ? '已启用 LLM 总结' : '已关闭 LLM 总结')
+                      }}
+                    />{' '}
+                    启用 LLM 总结
+                  </label>
+                </div>
+                <div className="form-row">
+                  <label>API Key（本机）</label>
+                  <input
+                    className="input"
+                    type="password"
+                    autoComplete="off"
+                    value={llmKey}
+                    onChange={(e) => setLlmKey(e.target.value)}
+                    placeholder="sk-…"
+                    style={{ minWidth: 220 }}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    disabled={llmBusy}
+                    onClick={async () => {
+                      setLlmBusy(true)
+                      try {
+                        const r = await saveLlmKey(llmKey)
+                        setMsg(r.ok ? 'Key 已保存到本机 userData' : r.error || '保存失败')
+                      } finally {
+                        setLlmBusy(false)
+                      }
+                    }}
+                  >
+                    保存 Key
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-xs"
+                    disabled={llmBusy}
+                    onClick={async () => {
+                      setLlmBusy(true)
+                      setLlmTestOut(null)
+                      try {
+                        const out = await summarizeWithUserLlm(
+                          '示例：今日买入 600519 100股，计划持有波段，情绪平稳。请用三条总结。',
+                        )
+                        setLlmTestOut(out)
+                        setMsg('LLM 测试成功')
+                      } catch (err) {
+                        setMsg(err instanceof Error ? err.message : 'LLM 测试失败')
+                      } finally {
+                        setLlmBusy(false)
+                      }
+                    }}
+                  >
+                    测试调用
+                  </button>
+                </div>
+                {llmTestOut && (
+                  <pre className="muted" style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>
+                    {llmTestOut}
+                  </pre>
+                )}
+              </>
+            )}
           </div>
         </div>
 

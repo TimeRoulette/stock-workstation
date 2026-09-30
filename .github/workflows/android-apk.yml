@@ -1,0 +1,73 @@
+name: Build Android Debug APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'capacitor.config.ts'
+      - '.github/workflows/android-apk.yml'
+      - 'vite.config.ts'
+      - 'index.html'
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build web
+        run: npm run build
+        env:
+          VITE_BASE: './'
+
+      - name: Install Capacitor
+        run: |
+          npm install -D @capacitor/cli@6 @capacitor/core@6 @capacitor/android@6
+
+      - name: Add & sync Android project
+        run: |
+          npx cap add android || true
+          npx cap sync android
+
+      - name: Assemble debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-workstation-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

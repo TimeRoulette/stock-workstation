@@ -36,10 +36,11 @@ export interface WorkstationBackup {
     theme: 'light' | 'dark'
     techScanSnapshot: TechScanSnapshot | null
     pendingOrders?: import('../types').PendingOrder[]
+    liveTrades?: import('../types').LiveTrade[]
   }
 }
 
-export function exportWorkstationBackup(appVersion = '0.10.0'): WorkstationBackup {
+export function exportWorkstationBackup(appVersion = '0.11.0'): WorkstationBackup {
   const settings = db.getSettings()
   let theme: 'light' | 'dark' = settings.theme
   try {
@@ -66,6 +67,7 @@ export function exportWorkstationBackup(appVersion = '0.10.0'): WorkstationBacku
       theme,
       techScanSnapshot: loadTechScanSnapshot(),
       pendingOrders: db.listPendingOrders('all'),
+      liveTrades: db.listLiveTrades(10000),
     },
   }
 }
@@ -143,6 +145,7 @@ export function importWorkstationBackup(backup: WorkstationBackup): void {
     journal: d.journal || [],
     settings: d.settings,
     pendingOrders: d.pendingOrders || [],
+    liveTrades: d.liveTrades || [],
   })
 
   try {
@@ -177,6 +180,7 @@ export const BACKUP_FIELD_HELP = [
   'positionNotes — 止损/止盈备注',
   'journal — 复盘笔记',
   'pendingOrders — 限价挂单',
+  'liveTrades — 实盘成交（与模拟隔离）',
   'settings — 行情源/刷新/免打扰/量监/通知等',
   'theme — 日间/夜间',
   'techScanSnapshot — 技术扫描上次结果（若有）',

@@ -24,6 +24,7 @@ import {
   Play,
   Square,
   RefreshCw,
+  ClipboardList,
 } from 'lucide-react'
 
 const SIZE = 18
@@ -50,6 +51,7 @@ export const Icons = {
   volume: wrap(Activity),
   screener: wrap(Search),
   portfolio: wrap(Wallet),
+  live: wrap(ClipboardList),
   brief: wrap(Newspaper),
   journal: wrap(NotebookPen),
   settings: wrap(Settings),

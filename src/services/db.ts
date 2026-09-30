@@ -21,6 +21,8 @@ import type {
   ImportTradesOptions,
   PendingOrder,
   PendingOrderStatus,
+  LiveTrade,
+  LiveTradeInput,
 } from '../types'
 
 const DB_KEY = 'stock-workstation-db-v1'
@@ -171,6 +173,7 @@ function migrate() {
   migratePendingOrders()
   migratePositionNoteAlerts()
   migrateJournalTemplate()
+  migrateLiveTrades()
 }
 
 /** v0.4: 自选分组标签（幂等） */
@@ -266,6 +269,29 @@ function migrateJournalTemplate() {
   }
 }
 
+
+/** v0.11: 实盘成交（与模拟 trades 隔离） */
+function migrateLiveTrades() {
+  if (!db) return
+  try {
+    db.run(`CREATE TABLE IF NOT EXISTS live_trades (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts TEXT NOT NULL,
+      symbol TEXT NOT NULL,
+      name TEXT NOT NULL,
+      side TEXT NOT NULL,
+      qty REAL NOT NULL,
+      price REAL NOT NULL,
+      fee REAL NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )`)
+    scheduleSave()
+  } catch (e) {
+    console.warn('migrateLiveTrades', e)
+  }
+}
+
 function seedIfEmpty() {
   const count = queryOne<{ c: number }>(
     'SELECT COUNT(*) FROM watchlist',
@@ -302,6 +328,9 @@ function seedIfEmpty() {
   if (getSetting('volumeLookback') == null) setSetting('volumeLookback', '20')
   if (getSetting('defaultRvolAlert') == null) setSetting('defaultRvolAlert', '2')
   if (getSetting('notifyEnabled') == null) setSetting('notifyEnabled', '0')
+  if (getSetting('electronOpenAtLogin') == null) setSetting('electronOpenAtLogin', '0')
+  if (getSetting('electronMinimizeToTray') == null) setSetting('electronMinimizeToTray', '0')
+  if (getSetting('llmSummaryEnabled') == null) setSetting('llmSummaryEnabled', '0')
 
   const snapCount = queryOne<{ c: number }>(
     'SELECT COUNT(*) FROM equity_snapshots',
@@ -349,32 +378,20 @@ export function setSetting(key: string, value: string) {
 }
 
 export function getSettings(): AppSettings {
-  const provider = (getSetting('quoteProvider') as QuoteProviderMode) || 'auto'
-  const muteStart = Number(getSetting('muteStartHour') ?? 23)
-  const muteEnd = Number(getSetting('muteEndHour') ?? 7)
-  const volLb = Number(getSetting('volumeLookback') ?? 20)
-  const defRvol = Number(getSetting('defaultRvolAlert') ?? 2)
-  let theme: 'light' | 'dark' = 'dark'
-  try {
-    const saved = localStorage.getItem('sw-theme')
-    if (saved === 'light' || saved === 'dark') theme = saved
-    else if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: light)').matches) {
-      theme = 'light'
-    }
-  } catch {
-    /* */
-  }
   return {
-    quoteProvider: provider,
+    quoteProvider: (getSetting('quoteProvider') as QuoteProviderMode) || 'auto',
     refreshIntervalSec: Number(getSetting('refreshIntervalSec') || 30),
-    theme,
+    theme: (getSetting('theme') as 'light' | 'dark') || 'dark',
     locale: 'zh-CN',
     coachDismissed: getSetting('coachDismissed') === '1',
-    muteStartHour: Number.isFinite(muteStart) ? Math.max(0, Math.min(23, Math.floor(muteStart))) : 23,
-    muteEndHour: Number.isFinite(muteEnd) ? Math.max(0, Math.min(23, Math.floor(muteEnd))) : 7,
-    volumeLookback: Number.isFinite(volLb) ? Math.max(5, Math.min(120, Math.floor(volLb))) : 20,
-    defaultRvolAlert: Number.isFinite(defRvol) ? Math.max(0.5, Math.min(20, defRvol)) : 2,
+    muteStartHour: Number(getSetting('muteStartHour') ?? 23),
+    muteEndHour: Number(getSetting('muteEndHour') ?? 7),
+    volumeLookback: Number(getSetting('volumeLookback') || 20),
+    defaultRvolAlert: Number(getSetting('defaultRvolAlert') || 2),
     notifyEnabled: getSetting('notifyEnabled') === '1',
+    electronOpenAtLogin: getSetting('electronOpenAtLogin') === '1',
+    electronMinimizeToTray: getSetting('electronMinimizeToTray') === '1',
+    llmSummaryEnabled: getSetting('llmSummaryEnabled') === '1',
   }
 }
 
@@ -1138,6 +1155,7 @@ export interface ReplaceWorkstationPayload {
   journal: JournalNote[]
   settings: AppSettings & { notifyEnabled?: boolean }
   pendingOrders?: PendingOrder[]
+  liveTrades?: LiveTrade[]
 }
 
 /** 用备份覆盖核心业务表（保留 quote_cache；settings 按备份写入） */
@@ -1281,6 +1299,26 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
     )
   }
 
+
+  for (const t of payload.liveTrades || []) {
+    run(
+      `INSERT INTO live_trades (id, ts, symbol, name, side, qty, price, fee, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        t.id,
+        t.ts,
+        String(t.symbol).toUpperCase(),
+        t.name || t.symbol,
+        t.side,
+        t.qty,
+        t.price,
+        t.fee ?? 0,
+        t.note || '',
+        t.createdAt || t.ts,
+      ],
+    )
+  }
+
   const s = payload.settings
   if (s.quoteProvider) setSetting('quoteProvider', s.quoteProvider)
   if (s.refreshIntervalSec != null) setSetting('refreshIntervalSec', String(s.refreshIntervalSec))
@@ -1290,6 +1328,9 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
   if (s.volumeLookback != null) setSetting('volumeLookback', String(s.volumeLookback))
   if (s.defaultRvolAlert != null) setSetting('defaultRvolAlert', String(s.defaultRvolAlert))
   if (s.notifyEnabled != null) setSetting('notifyEnabled', s.notifyEnabled ? '1' : '0')
+  if (s.electronOpenAtLogin != null) setSetting('electronOpenAtLogin', s.electronOpenAtLogin ? '1' : '0')
+  if (s.electronMinimizeToTray != null) setSetting('electronMinimizeToTray', s.electronMinimizeToTray ? '1' : '0')
+  if (s.llmSummaryEnabled != null) setSetting('llmSummaryEnabled', s.llmSummaryEnabled ? '1' : '0')
 }
 
 
@@ -1528,4 +1569,90 @@ export function exportJournalCsv(notes: JournalNote[] = listJournalNotes(5000)):
     )
   }
   return rows.join('\n')
+}
+
+
+/* ---------- Live trades (v0.11 实盘，与模拟隔离) ---------- */
+
+function mapLiveTrade(r: SqlValue[]): LiveTrade {
+  return {
+    id: Number(r[0]),
+    ts: String(r[1]),
+    symbol: String(r[2]),
+    name: String(r[3]),
+    side: String(r[4]) as TradeSide,
+    qty: Number(r[5]),
+    price: Number(r[6]),
+    fee: Number(r[7] || 0),
+    note: String(r[8] || ''),
+    createdAt: String(r[9]),
+  }
+}
+
+const LIVE_SELECT =
+  `SELECT id, ts, symbol, name, side, qty, price, fee, note, created_at FROM live_trades`
+
+export function listLiveTrades(limit = 5000): LiveTrade[] {
+  return queryAll(LIVE_SELECT + ' ORDER BY ts DESC, id DESC LIMIT ?', [limit], mapLiveTrade)
+}
+
+export function addLiveTrade(input: LiveTradeInput): LiveTrade {
+  if (!Number.isFinite(input.qty) || input.qty <= 0) throw new Error('数量必须大于 0')
+  if (!Number.isFinite(input.price) || input.price <= 0) throw new Error('价格必须大于 0')
+  const now = new Date().toISOString()
+  const symbol = input.symbol.toUpperCase()
+  run(
+    `INSERT INTO live_trades (ts, symbol, name, side, qty, price, fee, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      input.ts || now,
+      symbol,
+      input.name || symbol,
+      input.side,
+      input.qty,
+      input.price,
+      input.fee ?? 0,
+      input.note || '',
+      now,
+    ],
+  )
+  const row = queryOne(LIVE_SELECT + ' ORDER BY id DESC LIMIT 1', [], mapLiveTrade)
+  if (!row) throw new Error('写入实盘成交失败')
+  return row
+}
+
+export function deleteLiveTrade(id: number) {
+  run('DELETE FROM live_trades WHERE id = ?', [id])
+}
+
+export function clearLiveTrades() {
+  run('DELETE FROM live_trades')
+}
+
+export function exportLiveTradesCsv(trades: LiveTrade[] = listLiveTrades(10000)): string {
+  const rows = ['date,symbol,name,side,qty,price,fee,note']
+  for (const t of trades) {
+    rows.push(
+      [
+        t.ts,
+        t.symbol,
+        csvEscape(t.name),
+        t.side,
+        t.qty,
+        t.price,
+        t.fee,
+        csvEscape(t.note),
+      ].join(','),
+    )
+  }
+  return rows.join('\n')
+}
+
+export function addLiveTradesBulk(inputs: LiveTradeInput[]): number {
+  let n = 0
+  for (const input of inputs) {
+    addLiveTrade(input)
+    n++
+  }
+  return n
 }
