@@ -564,6 +564,117 @@ export async function fetchBoardConstituents(
   }
 }
 
+
+/** 全市场列表单页最大条数（东财 clist 常用上限约 100） */
+export const FULL_MARKET_PAGE_SIZE = 100
+/** A 股全市场页数上限（约 5000+ 只，留余量） */
+export const FULL_MARKET_MAX_PAGES_A = 60
+/** 港股/美股全列表上限页数（防止一次拉爆；UI 会提示限制） */
+export const FULL_MARKET_MAX_PAGES_HK_US = 30
+
+export interface FullMarketProgress {
+  page: number
+  loaded: number
+  totalHint: number
+}
+
+export interface FullMarketResult {
+  rows: ScreenerRow[]
+  market: ScreenerMarketTab
+  source: 'eastmoney' | 'mock'
+  delayed: true
+  asOf: string
+  total: number
+  pagesFetched: number
+  truncated: boolean
+  error?: string
+}
+
+/**
+ * 分页拉取全市场代码表（东财 clist）。
+ * - A 股：沪深主板 + 创业板 + 科创板（FS_A），按代码升序稳定分页
+ * - 港/美：尽力拉全列表，有页数上限并标记 truncated
+ * - 示意回退不用于全市场技术扫描（source=mock）
+ */
+export async function fetchFullMarketList(
+  market: ScreenerMarketTab = 'A',
+  opts: {
+    onProgress?: (p: FullMarketProgress) => void
+    shouldAbort?: () => boolean
+    pageSize?: number
+    maxPages?: number
+  } = {},
+): Promise<FullMarketResult> {
+  const pageSize = Math.min(Math.max(opts.pageSize ?? FULL_MARKET_PAGE_SIZE, 20), 100)
+  const maxPages =
+    opts.maxPages ??
+    (market === 'A' ? FULL_MARKET_MAX_PAGES_A : FULL_MARKET_MAX_PAGES_HK_US)
+  const fs = encodeURIComponent(fsFor(market))
+  const all: ScreenerRow[] = []
+  let total = 0
+  let pagesFetched = 0
+  let truncated = false
+  const t0 = performance.now()
+
+  try {
+    for (let page = 1; page <= maxPages; page++) {
+      if (opts.shouldAbort?.()) {
+        truncated = true
+        break
+      }
+      // 按代码升序，避免涨跌幅榜偏差；稳定全量覆盖
+      const apiPath =
+        `/api/qt/clist/get?pn=${page}&pz=${pageSize}&po=0&np=1` +
+        `&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2` +
+        `&fid=f12&fs=${fs}&fields=${FIELDS_STOCK}`
+      const res = await fetchFirstOk(screenerCandidateUrls(apiPath))
+      const json = await res.json()
+      const diffs: Array<Record<string, unknown>> = json?.data?.diff || []
+      if (!Array.isArray(diffs) || diffs.length === 0) break
+      const rankOffset = all.length
+      const rows = parseStockRows(diffs, market, rankOffset)
+      for (const row of rows) {
+        if (!all.some((x) => x.symbol === row.symbol)) all.push(row)
+      }
+      total = Number(json?.data?.total) || all.length
+      pagesFetched = page
+      opts.onProgress?.({ page, loaded: all.length, totalHint: total })
+      if (rows.length < pageSize) break
+      if (all.length >= total && total > 0) break
+      if (page === maxPages && all.length < total) truncated = true
+      // 轻微间隔，避免打爆源
+      await new Promise((r) => setTimeout(r, 80))
+    }
+    if (all.length === 0) throw new Error('全市场列表为空')
+    const latency = Math.round(performance.now() - t0)
+    markScreener(true, latency)
+    return {
+      rows: all.map((r, i) => ({ ...r, rank: i + 1 })),
+      market,
+      source: 'eastmoney',
+      delayed: true,
+      asOf: new Date().toISOString(),
+      total: total || all.length,
+      pagesFetched,
+      truncated,
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '拉取失败'
+    markScreener(false, Math.round(performance.now() - t0), msg)
+    return {
+      rows: [],
+      market,
+      source: 'mock',
+      delayed: true,
+      asOf: new Date().toISOString(),
+      total: 0,
+      pagesFetched,
+      truncated: false,
+      error: `全市场列表暂不可用（${msg}），不回退示意列表以免伪装全市场扫描`,
+    }
+  }
+}
+
 /** 轻量探测：拉 3 条 A 股涨幅 */
 export async function probeScreener(): Promise<ProviderHealth> {
   const r = await fetchChangeRank('A', 'gainers', { page: 1, pageSize: 3 })

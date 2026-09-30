@@ -5,7 +5,7 @@
 import type { Candle, Market } from '../types'
 import type { ScreenerMarketTab, ScreenerRow } from './screener'
 
-export type TechConditionId = 'volume_wash' | 'macd_golden' | 'breakout_pullback'
+export type TechConditionId = 'volume_wash' | 'macd_golden' | 'breakout_pullback' | 'main_rise'
 export type TechCombineMode = 'any' | 'all'
 export type CandleDataStatus = 'live' | 'mock' | 'insufficient' | 'error'
 
@@ -21,6 +21,11 @@ export const TECH_RULES_TEXT: Record<TechConditionId, string> = {
     '突破回踩：过去 N 日（默认 20，可 60）最高价为压力；近 10 日内放量日收盘有效突破' +
     '（收盘 ≥ 压力 × 1.005，且量 ≥ 前 20 日均量 × 1.5）；之后回踩不有效跌破支撑' +
     '（支撑=突破日开/低价均价，容差 1.5%），且最近 2 日收盘站上支撑并收阳或下影收敛。',
+  main_rise:
+    '主升趋势（五条件全满足）：①收盘 > MA20；②MA20 > MA60；③MA5 > MA10；' +
+    '④更高低点：回看 60 日，用半宽 3 日滑动窗找 swing low（左右各≥3 根内最低），' +
+    '取最近两个有效波段低点（至少间隔 5 根），最新低点价 ≥ 前一低点 × 1.003（约 0.3% 容差防贴价）；' +
+    '⑤近 20 日上涨日（收涨）均量 ≥ 下跌/平盘日均量 × 1.1，且上涨日、下跌日各≥3。需≥60 根日K。',
 }
 
 export interface MacdPoint {
@@ -56,6 +61,9 @@ export interface TechScanProgress {
   total: number
   hits: number
   current?: string
+  failed?: number
+  mockSkipped?: number
+  insufficient?: number
 }
 
 export interface TechScanOptions {
@@ -68,6 +76,8 @@ export interface TechScanOptions {
   concurrency?: number
   timeoutMs?: number
   onProgress?: (p: TechScanProgress) => void
+  /** 返回 true 时停止后续任务（可取消） */
+  shouldAbort?: () => boolean
 }
 
 export interface CandleFetchResult {
@@ -321,6 +331,165 @@ export function checkBreakoutPullback(daily: Candle[], pressureWindow: 20 | 60 =
   return null
 }
 
+
+/** 简单移动平均：取 closes[0..i] 的 period 均（序列与日线对齐，不足则为 NaN） */
+export function smaAt(closes: number[], period: number): number[] {
+  const out: number[] = new Array(closes.length).fill(NaN)
+  if (closes.length < period || period < 1) return out
+  let sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    if (i >= period) sum -= closes[i - period]
+    if (i >= period - 1) out[i] = sum / period
+  }
+  return out
+}
+
+/** 主升趋势参数（写进 UI/注释，过严时仅允许下列固定容差） */
+export const MAIN_RISE_PARAMS = {
+  minBars: 60,
+  lookback: 60,
+  swingHalfWidth: 3,
+  minSwingGap: 5,
+  /** 最新低点须 ≥ 前低 × 该倍数（约 +0.3%） */
+  higherLowRatio: 1.003,
+  volLookback: 20,
+  /** 上涨日均量 / 下跌日均量 */
+  volRatioMin: 1.1,
+  minUpDays: 3,
+  minDownDays: 3,
+} as const
+
+export interface SwingLow {
+  index: number
+  date: string
+  price: number
+}
+
+/**
+ * 滑动窗口局部低点：low[i] ≤ 左右各 halfWidth 根内所有 low（含自身）。
+ * 边缘不足 halfWidth 的位置跳过，避免假低点。
+ */
+export function findSwingLows(daily: Candle[], halfWidth = 3): SwingLow[] {
+  const out: SwingLow[] = []
+  const n = daily.length
+  if (n < halfWidth * 2 + 1) return out
+  for (let i = halfWidth; i < n - halfWidth; i++) {
+    const low = daily[i].low
+    if (!(low > 0)) continue
+    let isSwing = true
+    for (let j = i - halfWidth; j <= i + halfWidth; j++) {
+      if (j === i) continue
+      if (daily[j].low < low) {
+        isSwing = false
+        break
+      }
+    }
+    if (isSwing) {
+      out.push({ index: i, date: daily[i].time.slice(0, 10), price: low })
+    }
+  }
+  return out
+}
+
+/** 取最近两个有效波段低点（间隔 ≥ minGap 根） */
+export function lastTwoSwingLows(
+  swings: SwingLow[],
+  minGap = 5,
+): { newer: SwingLow; older: SwingLow } | null {
+  if (swings.length < 2) return null
+  for (let a = swings.length - 1; a >= 1; a--) {
+    for (let b = a - 1; b >= 0; b--) {
+      if (swings[a].index - swings[b].index >= minGap) {
+        return { newer: swings[a], older: swings[b] }
+      }
+    }
+  }
+  return null
+}
+
+/**
+ * 主升趋势：五条件全部满足才命中。
+ */
+export function checkMainRise(daily: Candle[]): TechHitEvidence | null {
+  const P = MAIN_RISE_PARAMS
+  if (daily.length < P.minBars) return null
+  const closes = daily.map((c) => c.close)
+  const ma5 = smaAt(closes, 5)
+  const ma10 = smaAt(closes, 10)
+  const ma20 = smaAt(closes, 20)
+  const ma60 = smaAt(closes, 60)
+  const last = daily.length - 1
+  const c = closes[last]
+  const v5 = ma5[last]
+  const v10 = ma10[last]
+  const v20 = ma20[last]
+  const v60 = ma60[last]
+  if (![c, v5, v10, v20, v60].every((x) => Number.isFinite(x) && x > 0)) return null
+
+  // ①②③
+  if (!(c > v20)) return null
+  if (!(v20 > v60)) return null
+  if (!(v5 > v10)) return null
+
+  // ④ 更高低点
+  const window = daily.slice(Math.max(0, daily.length - P.lookback))
+  const offset = daily.length - window.length
+  const swingsRaw = findSwingLows(window, P.swingHalfWidth)
+  const swings = swingsRaw.map((s) => ({ ...s, index: s.index + offset }))
+  const pair = lastTwoSwingLows(swings, P.minSwingGap)
+  if (!pair) return null
+  if (!(pair.newer.price >= pair.older.price * P.higherLowRatio)) return null
+
+  // ⑤ 上涨放量 / 回调缩量
+  const volSlice = daily.slice(-P.volLookback)
+  let upVol = 0
+  let upN = 0
+  let downVol = 0
+  let downN = 0
+  for (const bar of volSlice) {
+    if (bar.close > bar.open) {
+      upVol += bar.volume
+      upN += 1
+    } else {
+      // 收跌或平盘视为回调/弱势日
+      downVol += bar.volume
+      downN += 1
+    }
+  }
+  if (upN < P.minUpDays || downN < P.minDownDays) return null
+  const avgUp = upVol / upN
+  const avgDown = downVol / downN
+  if (!(avgDown > 0) || avgUp / avgDown < P.volRatioMin) return null
+  const volRatio = avgUp / avgDown
+
+  return {
+    condition: 'main_rise',
+    label: '主升趋势',
+    detail:
+      `收盘${c.toFixed(2)}>MA20 ${v20.toFixed(2)}>MA60 ${v60.toFixed(2)}；` +
+      `MA5 ${v5.toFixed(2)}>MA10 ${v10.toFixed(2)}；` +
+      `低点 ${pair.older.date}@${pair.older.price.toFixed(2)} → ${pair.newer.date}@${pair.newer.price.toFixed(2)}；` +
+      `近${P.volLookback}日涨日均量/跌日均量=${volRatio.toFixed(2)}（涨${upN}跌${downN}）`,
+    metrics: {
+      close: +c.toFixed(3),
+      ma5: +v5.toFixed(3),
+      ma10: +v10.toFixed(3),
+      ma20: +v20.toFixed(3),
+      ma60: +v60.toFixed(3),
+      low1Date: pair.older.date,
+      low1: +pair.older.price.toFixed(3),
+      low2Date: pair.newer.date,
+      low2: +pair.newer.price.toFixed(3),
+      volRatio: +volRatio.toFixed(3),
+      upDays: upN,
+      downDays: downN,
+      avgUpVol: Math.round(avgUp),
+      avgDownVol: Math.round(avgDown),
+    },
+  }
+}
+
 export function evaluateTechConditions(
   daily: Candle[],
   opts: {
@@ -343,6 +512,10 @@ export function evaluateTechConditions(
   }
   if (set.has('breakout_pullback')) {
     const h = checkBreakoutPullback(sorted, opts.pressureWindow ?? 20)
+    if (h) hits.push(h)
+  }
+  if (set.has('main_rise')) {
+    const h = checkMainRise(sorted)
     if (h) hits.push(h)
   }
   if (opts.combine === 'all' && hits.length < opts.conditions.length) return []
@@ -392,13 +565,35 @@ export async function scanTechCandidates(
   opts: TechScanOptions,
 ): Promise<TechScanHit[]> {
   const conditions = opts.conditions.length ? opts.conditions : (['macd_golden'] as TechConditionId[])
-  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 4, 6))
+  const concurrency = Math.max(1, Math.min(opts.concurrency ?? 3, 4))
   const timeoutMs = opts.timeoutMs ?? 10000
-  const days = Math.max(90, (opts.pressureWindow ?? 20) + 40)
+  const needMain = conditions.includes('main_rise')
+  const days = Math.max(needMain ? 120 : 90, (opts.pressureWindow ?? 20) + 40)
+  const minBars = needMain ? MAIN_RISE_PARAMS.minBars : 30
   const hits: TechScanHit[] = []
   let done = 0
+  let failed = 0
+  let mockSkipped = 0
+  let insufficient = 0
+  let aborted = false
+
+  const report = (current?: string) => {
+    opts.onProgress?.({
+      done,
+      total: candidates.length,
+      hits: hits.length,
+      current,
+      failed,
+      mockSkipped,
+      insufficient,
+    })
+  }
 
   await mapPool(candidates, concurrency, async (row) => {
+    if (aborted || opts.shouldAbort?.()) {
+      aborted = true
+      return
+    }
     const cacheKey = `${row.symbol}:${days}`
     let result: CandleFetchResult | null = null
     const cached = candleCache.get(cacheKey)
@@ -408,25 +603,17 @@ export async function scanTechCandidates(
       try {
         result = await withTimeout(fetchCandles(row.symbol, days), timeoutMs, row.symbol)
         candleCache.set(cacheKey, { ts: Date.now(), result })
-      } catch (e) {
+      } catch {
         done += 1
-        opts.onProgress?.({ done, total: candidates.length, hits: hits.length, current: row.symbol })
-        hits.push({
-          symbol: row.symbol,
-          name: row.name,
-          market: row.market,
-          price: row.price,
-          changePercent: row.changePercent,
-          dataStatus: 'error',
-          hits: [],
-          candleCount: 0,
-          lastBarDate: '',
-          error: e instanceof Error ? e.message : 'K线失败',
-        })
-        // 错误行不计入「命中」列表——下面会过滤；这里先不 push 到最终，改用旁路
-        hits.pop()
+        failed += 1
+        report(row.symbol)
         return
       }
+    }
+
+    if (aborted || opts.shouldAbort?.()) {
+      aborted = true
+      return
     }
 
     done += 1
@@ -434,12 +621,13 @@ export async function scanTechCandidates(
     const lastBarDate = candles.length ? candles[candles.length - 1].time.slice(0, 10) : ''
 
     if (result!.source === 'mock') {
-      opts.onProgress?.({ done, total: candidates.length, hits: hits.length, current: row.symbol })
-      // 示意数据：不算命中，但可在进度中体现；不加入 hits
+      mockSkipped += 1
+      report(row.symbol)
       return
     }
-    if (candles.length < 30) {
-      opts.onProgress?.({ done, total: candidates.length, hits: hits.length, current: row.symbol })
+    if (candles.length < minBars) {
+      insufficient += 1
+      report(row.symbol)
       return
     }
 
@@ -462,7 +650,7 @@ export async function scanTechCandidates(
         lastBarDate,
       })
     }
-    opts.onProgress?.({ done, total: candidates.length, hits: hits.length, current: row.symbol })
+    report(row.symbol)
   })
 
   return hits.sort((a, b) => b.hits.length - a.hits.length || b.changePercent - a.changePercent)
@@ -471,6 +659,7 @@ export async function scanTechCandidates(
 export function techConditionLabel(id: TechConditionId): string {
   if (id === 'volume_wash') return '量价洗盘'
   if (id === 'macd_golden') return 'MACD金叉'
+  if (id === 'main_rise') return '主升趋势'
   return '突破回踩'
 }
 

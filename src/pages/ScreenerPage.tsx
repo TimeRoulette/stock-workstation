@@ -6,6 +6,7 @@ import {
   fetchBoardConstituents,
   fetchBoardRank,
   fetchChangeRank,
+  fetchFullMarketList,
   LEADER_MID_RULES,
   SCREENER_MAX_PAGES,
   SCREENER_MAX_ROWS,
@@ -19,6 +20,7 @@ import {
 } from '../services/screener'
 import {
   clearTechCandleCache,
+  MAIN_RISE_PARAMS,
   scanTechCandidates,
   TECH_RULES_TEXT,
   techConditionLabel,
@@ -102,7 +104,14 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
   const [techScanning, setTechScanning] = useState(false)
   const [techError, setTechError] = useState<string | null>(null)
   const [techMockSkipped, setTechMockSkipped] = useState(0)
+  const [techFailed, setTechFailed] = useState(0)
+  const [techInsufficient, setTechInsufficient] = useState(0)
+  /** top200=涨跌幅前200；full=全市场代码表 */
+  const [techScope, setTechScope] = useState<'top200' | 'full'>('top200')
+  const [techHitPage, setTechHitPage] = useState(1)
+  const [listProgress, setListProgress] = useState<string | null>(null)
   const techAbort = useRef(0)
+  const TECH_HIT_PAGE_SIZE = 20
 
   const reloadWatch = useCallback(() => {
     try {
@@ -277,37 +286,69 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
     setTechScanning(true)
     setTechError(null)
     setTechHits([])
+    setTechHitPage(1)
     setTechMockSkipped(0)
-    setTechProgress({ done: 0, total: 0, hits: 0 })
+    setTechFailed(0)
+    setTechInsufficient(0)
+    setListProgress(null)
+    setTechProgress({ done: 0, total: 0, hits: 0, failed: 0, mockSkipped: 0, insufficient: 0 })
     try {
-      // 先拉齐前 200 候选（分页）
-      const all: ScreenerRow[] = []
-      let page = 1
-      let hasMore = true
-      while (hasMore && page <= SCREENER_MAX_PAGES) {
-        const r = await fetchChangeRank(market, sort, { page, pageSize: SCREENER_PAGE_SIZE })
+      let all: ScreenerRow[] = []
+      if (techScope === 'full') {
+        setListProgress('正在分页拉取全市场代码表…')
+        const r = await fetchFullMarketList(market, {
+          shouldAbort: () => token !== techAbort.current,
+          onProgress: (p) => {
+            if (token !== techAbort.current) return
+            setListProgress(`代码表 ${p.loaded}/${p.totalHint || '…'}（第 ${p.page} 页）`)
+          },
+        })
         if (token !== techAbort.current) return
-        if (r.source === 'mock') {
-          setTechError(
-            r.error ||
-              '涨跌幅榜为示意数据，已停止技术扫描（示意榜不可伪装为真实技术命中）',
-          )
+        if (r.source === 'mock' || r.rows.length === 0) {
+          setTechError(r.error || '全市场列表不可用，已停止（不使用示意列表）')
           setTechScanning(false)
+          setListProgress(null)
           return
         }
-        for (const row of r.rows) {
-          if (!all.some((x) => x.symbol === row.symbol)) all.push(row)
+        all = r.rows
+        const truncNote = r.truncated ? '（已截断/中止，未拉完全部）' : ''
+        setListProgress(`代码表就绪 ${all.length} 只${truncNote}，开始拉 K 线…`)
+        if (market !== 'A') {
+          setTechError(
+            `提示：${market === 'HK' ? '港股' : '美股'}全列表有页数上限，当前已加载 ${all.length} 只（接口 total≈${r.total}）。`,
+          )
         }
-        hasMore = r.hasMore && page < SCREENER_MAX_PAGES
-        page += 1
+      } else {
+        let page = 1
+        let hasMore = true
+        while (hasMore && page <= SCREENER_MAX_PAGES) {
+          if (token !== techAbort.current) return
+          const r = await fetchChangeRank(market, sort, { page, pageSize: SCREENER_PAGE_SIZE })
+          if (token !== techAbort.current) return
+          if (r.source === 'mock') {
+            setTechError(
+              r.error ||
+                '涨跌幅榜为示意数据，已停止技术扫描（示意榜不可伪装为真实技术命中）',
+            )
+            setTechScanning(false)
+            return
+          }
+          for (const row of r.rows) {
+            if (!all.some((x) => x.symbol === row.symbol)) all.push(row)
+          }
+          hasMore = r.hasMore && page < SCREENER_MAX_PAGES
+          page += 1
+        }
       }
+      if (token !== techAbort.current) return
       if (all.length === 0) {
         setTechError('无候选股票')
         setTechScanning(false)
         return
       }
-      setTechProgress({ done: 0, total: all.length, hits: 0 })
+      setTechProgress({ done: 0, total: all.length, hits: 0, failed: 0, mockSkipped: 0, insufficient: 0 })
       let mockSkip = 0
+      let lastFailed = 0
       const hits = await scanTechCandidates(
         all,
         async (symbol, days) => {
@@ -320,11 +361,18 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
           combine: techCombine,
           macdLookback,
           pressureWindow,
-          concurrency: 4,
+          concurrency: techScope === 'full' ? 3 : 4,
           timeoutMs: 10000,
+          shouldAbort: () => token !== techAbort.current,
           onProgress: (p) => {
             if (token !== techAbort.current) return
             setTechProgress(p)
+            if (p.mockSkipped != null) setTechMockSkipped(p.mockSkipped)
+            if (p.failed != null) {
+              lastFailed = p.failed
+              setTechFailed(p.failed)
+            }
+            if (p.insufficient != null) setTechInsufficient(p.insufficient)
           },
         },
       )
@@ -333,20 +381,33 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       setTechHits(hits)
       setSource('eastmoney')
       setAsOf(new Date().toISOString())
+      setListProgress(null)
       if (hits.length === 0) {
         setTechError(
-          mockSkip > 0
-            ? `扫描完成：无真实命中（其中 ${mockSkip} 只因仅有示意 K 线已跳过，未计入命中）`
+          mockSkip > 0 || lastFailed > 0
+            ? `扫描完成：无真实命中（示意跳过 ${mockSkip}，失败 ${lastFailed}）`
             : '扫描完成：当前条件无命中（规则偏严或数据不足属正常）',
         )
+      } else if (market === 'A' || techScope === 'top200') {
+        setTechError(null)
       }
     } catch (e) {
       if (token !== techAbort.current) return
       setTechError(e instanceof Error ? e.message : '技术扫描失败')
     } finally {
-      if (token === techAbort.current) setTechScanning(false)
+      if (token === techAbort.current) {
+        setTechScanning(false)
+        setListProgress(null)
+      }
     }
-  }, [macdLookback, market, pressureWindow, sort, techCombine, techConds])
+  }, [macdLookback, market, pressureWindow, sort, techCombine, techConds, techScope])
+
+  const stopTechScan = useCallback(() => {
+    techAbort.current += 1
+    setTechScanning(false)
+    setListProgress(null)
+    onToast?.({ message: '已请求停止扫描（进行中的请求会尽快结束）', type: 'info' })
+  }, [onToast])
 
   const subtitle = (() => {
     const parts: string[] = []
@@ -355,7 +416,11 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       if (techScanning && techProgress) {
         parts.push(`${techProgress.done}/${techProgress.total}`)
         parts.push(`命中 ${techProgress.hits}`)
-      } else if (techHits.length) parts.push(`命中 ${techHits.length}`)
+        if (techScope === 'full') parts.push('全市场')
+      } else if (techHits.length) {
+        parts.push(`命中 ${techHits.length}`)
+        if (techScope === 'full') parts.push('全市场')
+      }
     } else if (mainTab === 'stocks') parts.push('个股涨跌幅')
     else if (selectedBoard) parts.push(`${selectedBoard.name} · 成分股`)
     else parts.push(boardKind === 'industry' ? '行业板块' : '概念板块')
@@ -377,6 +442,11 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
           <p className="subtitle">{subtitle}</p>
         </div>
         <div className="toolbar">
+          {mainTab === 'tech' && techScanning ? (
+            <button type="button" className="btn" onClick={stopTechScan}>
+              停止
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn primary"
@@ -389,7 +459,9 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
             {mainTab === 'tech'
               ? techScanning
                 ? '扫描中…'
-                : '开始扫描'
+                : techScope === 'full'
+                  ? '全市场扫描'
+                  : '开始扫描'
               : loading
                 ? '刷新中…'
                 : '刷新'}
@@ -400,8 +472,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       <div className="page-body">
         <div className="tip-banner">
           数据来自东方财富公开 list 接口，通常有延迟，仅供学习研究，不构成投资建议。个股榜可加载至前{' '}
-          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。技术筛选在前{' '}
-          {SCREENER_MAX_ROWS} 候选上按需拉 K 线，示意数据不会计入命中。
+          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。技术筛选可选涨跌幅前 {SCREENER_MAX_ROWS} 或全市场代码表；示意 K 线不计命中；失败跳过。
         </div>
 
         <div className="toolbar screener-toolbar" style={{ marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
@@ -497,11 +568,14 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
             <div className="panel tech-panel" style={{ marginBottom: 12, padding: 12 }}>
               <div className="tech-rules" style={{ marginBottom: 10 }}>
                 <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-                  勾选条件后点「开始扫描」。候选=当前市场涨跌幅榜前 {SCREENER_MAX_ROWS}；并发 4、单票超时
-                  10s、K 线缓存约 10 分钟。示意 K 线跳过不计命中。
+                  勾选条件后扫描。范围可选涨跌幅前 {SCREENER_MAX_ROWS} 或全市场（A
+                  股沪深主板+创业板+科创板；港/美有页数上限）。全市场并发 3、前200 并发
+                  4；单票超时 10s；K 线缓存约 10 分钟。示意 K 线与失败均跳过不计命中。全市场约数千只，预计十余分钟，可随时点「停止」。
                 </div>
                 <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                  {(['volume_wash', 'macd_golden', 'breakout_pullback'] as TechConditionId[]).map((id) => (
+                  {(
+                    ['main_rise', 'volume_wash', 'macd_golden', 'breakout_pullback'] as TechConditionId[]
+                  ).map((id) => (
                     <button
                       key={id}
                       type="button"
@@ -511,6 +585,31 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                       {techConditionLabel(id)}
                     </button>
                   ))}
+                </div>
+                <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <div className="seg-control" role="tablist" aria-label="扫描范围">
+                    <button
+                      type="button"
+                      className={techScope === 'top200' ? 'active' : ''}
+                      disabled={techScanning}
+                      onClick={() => setTechScope('top200')}
+                    >
+                      前 {SCREENER_MAX_ROWS}
+                    </button>
+                    <button
+                      type="button"
+                      className={techScope === 'full' ? 'active' : ''}
+                      disabled={techScanning}
+                      onClick={() => setTechScope('full')}
+                    >
+                      全市场扫描
+                    </button>
+                  </div>
+                  {techScope === 'full' && (
+                    <span className="muted" style={{ fontSize: 12, alignSelf: 'center' }}>
+                      预计耗时：A 股全市场约 10–20 分钟（视网络/中继）
+                    </span>
+                  )}
                 </div>
                 <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                   <div className="seg-control" role="tablist" aria-label="组合">
@@ -569,25 +668,42 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                 <details className="tech-rule-details">
                   <summary>查看规则阈值</summary>
                   <ul style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12, color: 'var(--text-muted)' }}>
+                    <li>{TECH_RULES_TEXT.main_rise}</li>
                     <li>{TECH_RULES_TEXT.volume_wash}</li>
                     <li>{TECH_RULES_TEXT.macd_golden}</li>
                     <li>{TECH_RULES_TEXT.breakout_pullback}</li>
+                    <li>
+                      主升参数：回看 {MAIN_RISE_PARAMS.lookback} 日、摆动半宽{' '}
+                      {MAIN_RISE_PARAMS.swingHalfWidth}、间隔≥{MAIN_RISE_PARAMS.minSwingGap}、更高低点×
+                      {MAIN_RISE_PARAMS.higherLowRatio}、量比≥{MAIN_RISE_PARAMS.volRatioMin}（近{' '}
+                      {MAIN_RISE_PARAMS.volLookback} 日）。
+                    </li>
                   </ul>
                 </details>
               </div>
-              {techScanning && techProgress && (
+              {(listProgress || (techScanning && techProgress)) && (
                 <div className="tech-progress">
-                  <div className="tech-progress-bar">
-                    <div
-                      style={{
-                        width: `${techProgress.total ? (100 * techProgress.done) / techProgress.total : 0}%`,
-                      }}
-                    />
-                  </div>
+                  {techProgress && techProgress.total > 0 && (
+                    <div className="tech-progress-bar">
+                      <div
+                        style={{
+                          width: `${(100 * techProgress.done) / techProgress.total}%`,
+                        }}
+                      />
+                    </div>
+                  )}
                   <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                    进度 {techProgress.done}/{techProgress.total}
-                    {techProgress.current ? ` · ${techProgress.current}` : ''} · 命中 {techProgress.hits}
-                    {techMockSkipped ? ` · 跳过示意 ${techMockSkipped}` : ''}
+                    {listProgress ? `${listProgress} · ` : ''}
+                    {techProgress && techProgress.total > 0
+                      ? `已扫描 ${techProgress.done}/${techProgress.total}`
+                      : techScanning
+                        ? '准备中…'
+                        : ''}
+                    {techProgress?.current ? ` · ${techProgress.current}` : ''} · 命中{' '}
+                    {techProgress?.hits ?? 0}
+                    {techFailed ? ` · 失败 ${techFailed}` : ''}
+                    {techMockSkipped ? ` · 示意跳过 ${techMockSkipped}` : ''}
+                    {techInsufficient ? ` · K线不足 ${techInsufficient}` : ''}
                   </div>
                 </div>
               )}
@@ -603,7 +719,8 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                 <div className="panel-header">
                   <span>
                     技术命中 · {techHits.length} 只
-                    {techMockSkipped ? `（另跳过示意 ${techMockSkipped}）` : ''}
+                    {techMockSkipped ? ` · 示意跳过 ${techMockSkipped}` : ''}
+                    {techFailed ? ` · 失败 ${techFailed}` : ''}
                   </span>
                   <span className="muted" style={{ fontSize: 12 }}>
                     仅真实 K 线 · 非投资建议
@@ -624,7 +741,10 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                       </tr>
                     </thead>
                     <tbody>
-                      {techHits.map((r, idx) => {
+                      {techHits
+                        .slice((techHitPage - 1) * TECH_HIT_PAGE_SIZE, techHitPage * TECH_HIT_PAGE_SIZE)
+                        .map((r, i) => {
+                        const idx = (techHitPage - 1) * TECH_HIT_PAGE_SIZE + i
                         const up = safeNum(r.changePercent) >= 0
                         const inWatch = watchSet.has(r.symbol)
                         return (
@@ -675,6 +795,37 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                     </tbody>
                   </table>
                 </div>
+                {techHits.length > TECH_HIT_PAGE_SIZE && (
+                  <div
+                    className="toolbar"
+                    style={{ padding: 12, justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}
+                  >
+                    <button
+                      type="button"
+                      className="btn btn-xs touch-target"
+                      disabled={techHitPage <= 1}
+                      onClick={() => setTechHitPage((p) => Math.max(1, p - 1))}
+                    >
+                      上一页
+                    </button>
+                    <span className="muted" style={{ fontSize: 12, alignSelf: 'center' }}>
+                      {techHitPage}/{Math.ceil(techHits.length / TECH_HIT_PAGE_SIZE)} 页 · 每页{' '}
+                      {TECH_HIT_PAGE_SIZE}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-xs touch-target"
+                      disabled={techHitPage >= Math.ceil(techHits.length / TECH_HIT_PAGE_SIZE)}
+                      onClick={() =>
+                        setTechHitPage((p) =>
+                          Math.min(Math.ceil(techHits.length / TECH_HIT_PAGE_SIZE), p + 1),
+                        )
+                      }
+                    >
+                      下一页
+                    </button>
+                  </div>
+                )}
               </div>
             ) : null}
           </>

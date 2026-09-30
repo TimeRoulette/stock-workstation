@@ -828,6 +828,112 @@ export interface BriefProvider {
   ): Promise<BriefItem[]>
 }
 
+
+/**
+ * 规则化汇总短文：仅基于已抓取条目，不编造未出现事件。
+ * 3–8 句中文，覆盖隔夜基调、国内/板块焦点、自选倾向、今日关注。
+ */
+export function buildSummaryAnalysis(
+  items: BriefItem[],
+  watchCount: number,
+): BriefItem {
+  const day = todayStr()
+  const real = items.filter((i) => i.dataStatus === 'live' || i.dataStatus === 'cached')
+  const overnight = real.filter((i) => i.section === 'overnight')
+  const focus = real.filter((i) => i.section === 'focus')
+  const watchHits = real.filter(
+    (i) => i.section === 'watchlist' && i.matchMode && i.matchMode !== 'none' && (i.symbols?.length || 0) > 0,
+  )
+  const boards = real.filter((i) => (i.topics || []).includes('A股') || i.source.includes('东财'))
+
+  const sentences: string[] = []
+
+  if (real.length === 0) {
+    sentences.push('当前公开新闻源数据不足，无法生成有依据的汇总分析。')
+    sentences.push('请稍后刷新；本段不会编造未抓取到的隔夜或板块事件。')
+  } else {
+    // 隔夜基调
+    if (overnight.length === 0) {
+      sentences.push('隔夜全球相关条目较少或未归入该分区，隔夜基调暂不作判断。')
+    } else {
+      const bulls = overnight.filter((i) => i.sentiment === 'bullish').length
+      const bears = overnight.filter((i) => i.sentiment === 'bearish').length
+      const tone =
+        bulls > bears + 1 ? '偏积极' : bears > bulls + 1 ? '偏谨慎' : '中性偏分化'
+      const sample = overnight
+        .slice(0, 2)
+        .map((i) => i.title.replace(/^（示意）/, '').slice(0, 28))
+        .join('；')
+      sentences.push(
+        `隔夜全球共归纳 ${overnight.length} 条，规则情绪整体${tone}（偏利好 ${bulls} / 偏空 ${bears}），例如：${sample}。`,
+      )
+    }
+
+    // 国内/板块
+    const focusPool = focus.length ? focus : boards
+    if (focusPool.length === 0) {
+      sentences.push('今日国内/板块焦点条目不足，暂无可靠板块异动摘要。')
+    } else {
+      const names = focusPool
+        .slice(0, 3)
+        .map((i) => i.title.slice(0, 24))
+        .join('；')
+      sentences.push(`国内与板块焦点方面，已抓取 ${focusPool.length} 条，要点包括：${names}。`)
+    }
+
+    // 自选倾向
+    if (watchCount <= 0) {
+      sentences.push('尚未添加自选，对持仓/自选的整体倾向暂无关联。')
+    } else if (watchHits.length === 0) {
+      sentences.push(
+        `自选共 ${watchCount} 只，当前标题关键词未能可靠匹配新闻，整体倾向标为「暂无关联」，不牵强解读。`,
+      )
+    } else {
+      const wb = watchHits.filter((i) => i.sentiment === 'bullish').length
+      const we = watchHits.filter((i) => i.sentiment === 'bearish').length
+      const ww = watchHits.filter((i) => i.sentiment === 'watch').length
+      let lean = '分化'
+      if (wb > we + 1 && ww === 0) lean = '偏利好'
+      else if (we > wb + 1) lean = '偏空'
+      else if (wb === 0 && we === 0) lean = '中性关注'
+      sentences.push(
+        `与自选相关的匹配新闻 ${watchHits.length} 条（自选 ${watchCount} 只），规则汇总倾向「${lean}」（利好 ${wb} / 利空 ${we} / 需关注 ${ww}）。`,
+      )
+    }
+
+    // 今日关注点
+    const tips: string[] = []
+    if (overnight.some((i) => (i.topics || []).some((t) => t.includes('利率') || t.includes('央行')))) {
+      tips.push('央行/利率表述')
+    }
+    if (overnight.some((i) => (i.topics || []).some((t) => t.includes('地缘')))) {
+      tips.push('地缘局势')
+    }
+    if (focusPool.length) tips.push('国内板块轮动与量能')
+    if (watchHits.length) tips.push('自选相关标题是否落地')
+    if (!tips.length) tips.push('开盘高低开与成交额变化')
+    sentences.push(`今日可关注：${tips.slice(0, 4).join('、')}。`)
+    sentences.push('以上为基于已抓取新闻的规则汇总，非 AI 荐股，不构成投资建议。')
+  }
+
+  // 控制 3–8 句
+  const body = sentences.slice(0, 8).join('')
+
+  return {
+    id: 'summary-analysis',
+    title: '汇总分析',
+    summary: body,
+    source: '工作台 · 规则汇总',
+    category: 'tip',
+    publishedAt: day,
+    dataStatus: real.length ? (real.some((i) => i.dataStatus === 'live') ? 'live' : 'cached') : 'sample',
+    section: 'summary',
+    matchMode: 'none',
+    sentiment: 'neutral',
+    topics: ['规则汇总'],
+  }
+}
+
 export async function aggregateBrief(
   watchItems: Array<Pick<WatchlistItem, 'symbol' | 'name' | 'tag'>> = [],
   holdings: Array<{ symbol: string; name: string; qty: number }> = [],
@@ -923,9 +1029,18 @@ export async function aggregateBrief(
     matchMode: 'none',
   }
 
-  // 顺序：盘前/持仓/自选说明 → 隔夜全球 → 今日关注 → 自选影响 → 其余 → 声明
+  const draftForSummary: BriefItem[] = [
+    ...overnight.slice(0, 10),
+    ...focus.slice(0, 8),
+    ...watchSection,
+    ...general.slice(0, 6),
+  ]
+  const summaryItem = buildSummaryAnalysis(draftForSummary, watch.length)
+
+  // 顺序：盘前/持仓/自选说明 → 汇总分析 → 隔夜全球 → 今日关注 → 自选影响 → 其余 → 声明
   const ordered = [
     ...meta,
+    summaryItem,
     ...overnight.slice(0, 10),
     ...focus.slice(0, 8),
     ...watchSection,
@@ -937,9 +1052,14 @@ export async function aggregateBrief(
   const seen = new Set<string>()
   const out: BriefItem[] = []
   for (const it of ordered) {
-    const k = it.id.startsWith('meta') || it.id.startsWith('hold') || it.id.startsWith('watch') || it.id === 'disclaimer'
-      ? it.id
-      : titleKey(it.title)
+    const k =
+      it.id.startsWith('meta') ||
+      it.id.startsWith('hold') ||
+      it.id.startsWith('watch') ||
+      it.id === 'disclaimer' ||
+      it.id === 'summary-analysis'
+        ? it.id
+        : titleKey(it.title)
     if (seen.has(k)) continue
     seen.add(k)
     out.push(it)

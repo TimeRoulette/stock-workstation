@@ -117,7 +117,7 @@ export type BriefMatchMode = 'none' | 'title_keyword' | 'symbol' | 'industry'
 export type BriefSentiment = 'bullish' | 'bearish' | 'neutral' | 'watch'
 
 /** 早盘日报分区 */
-export type BriefSection = 'premarket' | 'overnight' | 'focus' | 'watchlist' | 'holding' | 'general'
+export type BriefSection = 'premarket' | 'summary' | 'overnight' | 'focus' | 'watchlist' | 'holding' | 'general'
 
 export interface BriefItem {
   id: string

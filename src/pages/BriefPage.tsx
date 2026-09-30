@@ -14,6 +14,7 @@ const CAT: Record<BriefItem['category'], string> = {
 const SECTION_ORDER: Array<{ key: BriefSection; title: string }> = [
   { key: 'premarket', title: '盘前概览' },
   { key: 'holding', title: '持仓速览' },
+  { key: 'summary', title: '汇总分析' },
   { key: 'overnight', title: '隔夜全球' },
   { key: 'focus', title: '今日关注' },
   { key: 'watchlist', title: '自选影响' },
@@ -130,7 +131,7 @@ export function BriefPage({ onOpenSymbol }: Props) {
       <div className="page-body">
         <div className="tip-banner">
           公开源：人民日报财经、央视财经、华尔街见闻、BBC Business、美联储新闻稿、东财板块榜（均无密钥）。
-          每条标注「实时/缓存/示意」；自选匹配若仅标题关键词会标明。情绪为规则摘要，非荐股或 AI 预测。仅供研究，不构成投资建议。
+          每条标注「实时/缓存/示意」；自选匹配若仅标题关键词会标明。「汇总分析」为基于已抓取新闻的规则短文，非 AI 荐股。仅供研究，不构成投资建议。
         </div>
 
         {loading ? (

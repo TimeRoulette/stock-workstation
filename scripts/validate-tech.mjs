@@ -61,4 +61,53 @@ const support = 99
 assert(!(97.6 < support * 0.985), '距支撑 1.5% 内不算跌破')
 assert(97.4 < support * 0.985, '跌破容差外算失效')
 
+
+// —— 主升趋势参数与摆动低点 ——
+const MAIN = {
+  higherLowRatio: 1.003,
+  volRatioMin: 1.1,
+  swingHalfWidth: 3,
+  minSwingGap: 5,
+}
+assert(MAIN.higherLowRatio === 1.003, '更高低点容差 0.3%')
+assert(MAIN.volRatioMin === 1.1, '涨跌日量比 ≥1.1')
+
+function findSwingLows(lows, halfWidth) {
+  const out = []
+  for (let i = halfWidth; i < lows.length - halfWidth; i++) {
+    let ok = true
+    for (let j = i - halfWidth; j <= i + halfWidth; j++) {
+      if (j === i) continue
+      if (lows[j] < lows[i]) { ok = false; break }
+    }
+    if (ok) out.push(i)
+  }
+  return out
+}
+// 构造：索引 3 与 10 为明显局部低
+const lows = [10, 9, 8, 5, 6, 7, 8, 7, 6, 5.5, 4, 5, 6, 7]
+const swings = findSwingLows(lows, 3)
+assert(swings.includes(3), '应检出 index3 摆动低')
+assert(swings.includes(10), '应检出 index10 摆动低')
+assert(lows[10] < lows[3], '后低更低时应不满足更高低点')
+assert(!(lows[10] >= lows[3] * MAIN.higherLowRatio), '更低低点拒绝')
+assert(6 >= 5 * MAIN.higherLowRatio, '更高低点通过')
+
+// SMA
+function smaAt(closes, period) {
+  const out = new Array(closes.length).fill(NaN)
+  let sum = 0
+  for (let i = 0; i < closes.length; i++) {
+    sum += closes[i]
+    if (i >= period) sum -= closes[i - period]
+    if (i >= period - 1) out[i] = sum / period
+  }
+  return out
+}
+const c = [1, 2, 3, 4, 5]
+const m3 = smaAt(c, 3)
+assert(Math.abs(m3[2] - 2) < 1e-9, 'SMA3 seed')
+assert(Math.abs(m3[4] - 4) < 1e-9, 'SMA3 last')
+
 console.log('validate-tech: OK')
+
