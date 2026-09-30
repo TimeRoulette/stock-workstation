@@ -28,6 +28,16 @@ import {
   saveLlmKey,
   summarizeWithUserLlm,
 } from '../services/llmSummary'
+import {
+  APP_VERSION,
+  UPDATE_CHECKER_NOTE,
+  UPDATE_WEB_NOTE,
+  checkForAppUpdate,
+  isNativeAndroid,
+  openApkDownload,
+  type AndroidUpdateMeta,
+  type UpdateCheckResult,
+} from '../services/appUpdate'
 
 interface Props {
   settings: AppSettings
@@ -36,9 +46,24 @@ interface Props {
   onShowShortcuts?: () => void
   theme?: ThemeMode
   onThemeChange?: (theme: ThemeMode) => void
+  onUpdateAvailable?: (info: {
+    latestVersion: string
+    currentVersion: string
+    meta?: AndroidUpdateMeta
+  }) => void
+  onClearUpdateBadge?: () => void
 }
 
-export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts, theme, onThemeChange }: Props) {
+export function SettingsPage({
+  settings,
+  onChange,
+  onShowCoach,
+  onShowShortcuts,
+  theme,
+  onThemeChange,
+  onUpdateAvailable,
+  onClearUpdateBadge,
+}: Props) {
   const [msg, setMsg] = useState<string | null>(null)
   const [health, setHealth] = useState<ProviderHealth[]>([])
   const [screenerHealth, setScreenerHealth] = useState<ProviderHealth | null>(null)
@@ -55,6 +80,8 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
   const [llmKey, setLlmKey] = useState('')
   const [llmBusy, setLlmBusy] = useState(false)
   const [llmTestOut, setLlmTestOut] = useState<string | null>(null)
+  const [updateChecking, setUpdateChecking] = useState(false)
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
 
   useEffect(() => {
     setHealth(getProviderHealth())
@@ -889,7 +916,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                 className="btn primary"
                 onClick={() => {
                   try {
-                    const r = downloadBackup('0.10.0')
+                    const r = downloadBackup(APP_VERSION)
                     setMsg(`已下载 ${r.filename}`)
                   } catch (e) {
                     setMsg(e instanceof Error ? e.message : '导出失败')
@@ -1006,14 +1033,139 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
           </div>
         </div>
 
+
+        <div className="panel" style={{ marginTop: 16 }}>
+          <div className="panel-header">
+            <span>检查更新（Android APK）</span>
+            <Icons.refresh />
+          </div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              当前应用版本 <strong>v{APP_VERSION}</strong>
+              {isNativeAndroid() ? ' · Capacitor 安卓壳' : ' · 浏览器 / PWA / 桌面'}
+              。检查会拉取 Pages 上的 <code>app-update.json</code>，展示版本号与更新内容；
+              <strong>不强制、不静默升级</strong>，由你决定是否下载安装。
+            </p>
+            <p className="muted" style={{ fontSize: 12 }}>{UPDATE_CHECKER_NOTE}</p>
+            {!isNativeAndroid() && (
+              <p className="muted" style={{ fontSize: 12 }}>{UPDATE_WEB_NOTE}</p>
+            )}
+            <div className="form-row" style={{ alignItems: 'center' }}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={settings.autoCheckUpdate !== false}
+                  onChange={(e) => {
+                    const on = e.target.checked
+                    db.setSetting('autoCheckUpdate', on ? '1' : '0')
+                    onChange({ ...settings, autoCheckUpdate: on })
+                    setMsg(on ? '已开启启动后轻量检查更新' : '已关闭自动检查更新')
+                  }}
+                />{' '}
+                启动后自动轻量检查（有新版本时角标/横幅，不打断）
+              </label>
+            </div>
+            <div className="toolbar" style={{ marginTop: 8, gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn primary"
+                disabled={updateChecking}
+                onClick={async () => {
+                  setUpdateChecking(true)
+                  setUpdateResult(null)
+                  try {
+                    const r = await checkForAppUpdate({ currentVersion: APP_VERSION })
+                    setUpdateResult(r)
+                    if (r.status === 'update_available' && r.meta && r.latestVersion) {
+                      onUpdateAvailable?.({
+                        latestVersion: r.latestVersion,
+                        currentVersion: r.currentVersion,
+                        meta: r.meta,
+                      })
+                      setMsg(r.message)
+                    } else if (r.status === 'up_to_date') {
+                      onClearUpdateBadge?.()
+                      setMsg(r.message)
+                    } else {
+                      setMsg(r.message)
+                    }
+                  } finally {
+                    setUpdateChecking(false)
+                  }
+                }}
+              >
+                {updateChecking ? '检查中…' : '检查更新'}
+              </button>
+              {updateResult?.status === 'update_available' && updateResult.meta?.apkUrl && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    void openApkDownload(updateResult.meta!.apkUrl).then((r) => {
+                      setMsg(
+                        r.ok
+                          ? '已打开下载链接；请在系统安装界面确认（同 debug 签名可覆盖安装）'
+                          : '无法打开下载链接，请到 Release 页手动下载',
+                      )
+                    })
+                  }}
+                >
+                  <Icons.download /> 下载并安装 v{updateResult.latestVersion}
+                </button>
+              )}
+              {updateResult?.meta?.releasePage && (
+                <a
+                  className="btn btn-xs"
+                  href={updateResult.meta.releasePage}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Release 页
+                </a>
+              )}
+            </div>
+            {updateResult && (
+              <div className="update-result" style={{ marginTop: 12 }}>
+                <p style={{ margin: '0 0 6px', fontSize: 13 }}>
+                  {updateResult.status === 'update_available' && (
+                    <span className="health-pill health-ok">有新版本</span>
+                  )}
+                  {updateResult.status === 'up_to_date' && (
+                    <span className="health-pill health-ok">已最新</span>
+                  )}
+                  {updateResult.status === 'error' && (
+                    <span className="health-pill health-down">失败</span>
+                  )}{' '}
+                  {updateResult.message}
+                  {updateResult.source ? (
+                    <span className="muted"> · 来源 {updateResult.source}</span>
+                  ) : null}
+                </p>
+                {updateResult.meta?.changelog && updateResult.meta.changelog.length > 0 && (
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.55 }}>
+                    {updateResult.meta.changelog.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="panel" style={{ marginTop: 16 }}>
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.12.0 · 文案/行情加固/模拟实盘加深
+              <strong>股票工作台</strong> v{APP_VERSION} · 应用内检查更新
             </p>
             <p className="muted">
-              运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}
+              运行环境：
+              {isNativeAndroid()
+                ? 'Android（Capacitor）'
+                : isElectron
+                  ? `Electron (${window.stockWorkstation?.platform})`
+                  : 'Web（浏览器）'}
             </p>
             <p className="muted">技术栈：Electron + Vite + React + TypeScript + sql.js + lightweight-charts</p>
           </div>

@@ -17,6 +17,13 @@ import type { AppSettings, Quote, ToastItem } from './types'
 import { useTheme } from './hooks/useTheme'
 import { summarizeDataStatus, type DataStatusSummary } from './utils/dataStatus'
 import { Icons } from './components/Icon'
+import { UpdateBanner } from './components/UpdateBanner'
+import {
+  APP_VERSION,
+  checkForAppUpdate,
+  isNativeAndroid,
+  type AndroidUpdateMeta,
+} from './services/appUpdate'
 
 const PAGE_BY_KEY: Record<string, PageKey> = {
   '1': 'watchlist',
@@ -77,6 +84,7 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
     paperStampTaxRate: 0.0005,
     riskMaxPositionPct: 0.35,
     riskDailyLossPct: 0.03,
+    autoCheckUpdate: true,
   })
   const [bootError, setBootError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -91,6 +99,13 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
     summarizeDataStatus([], { providerMode: 'auto' }),
   )
   const [dupDismissed, setDupDismissed] = useState(false)
+  const [updateBanner, setUpdateBanner] = useState<{
+    latestVersion: string
+    currentVersion: string
+    meta?: AndroidUpdateMeta
+    context: 'android' | 'web'
+  } | null>(null)
+  const [updateBadge, setUpdateBadge] = useState(false)
 
   const refreshAlertCount = useCallback(() => {
     try {
@@ -155,6 +170,40 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
         setBootError(e instanceof Error ? e.message : '数据库初始化失败')
       })
   }, [refreshAlertCount])
+
+  // 启动后轻量检查更新（可关；有新版本时横幅提示，不打断）
+  useEffect(() => {
+    if (!ready) return
+    if (!settings.autoCheckUpdate) return
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const r = await checkForAppUpdate({ currentVersion: APP_VERSION })
+          if (cancelled || r.status !== 'update_available' || !r.meta) return
+          const dismissed = sessionStorage.getItem(`sw-update-dismissed:${r.latestVersion}`)
+          if (dismissed) {
+            setUpdateBadge(true)
+            return
+          }
+          setUpdateBadge(true)
+          setUpdateBanner({
+            latestVersion: r.latestVersion!,
+            currentVersion: r.currentVersion,
+            meta: r.meta,
+            context: isNativeAndroid() ? 'android' : 'web',
+          })
+        } catch {
+          /* 静默失败 */
+        }
+      })()
+    }, 2500)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, settings.autoCheckUpdate])
 
   useEffect(() => {
     const onQuotes = (ev: Event) => {
@@ -239,6 +288,26 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
 
   return (
     <div className="app-shell">
+      {updateBanner && (
+        <UpdateBanner
+          latestVersion={updateBanner.latestVersion}
+          currentVersion={updateBanner.currentVersion}
+          meta={updateBanner.meta}
+          context={updateBanner.context}
+          onDismiss={() => {
+            try {
+              sessionStorage.setItem(`sw-update-dismissed:${updateBanner.latestVersion}`, '1')
+            } catch {
+              /* */
+            }
+            setUpdateBanner(null)
+          }}
+          onOpenSettings={() => {
+            setUpdateBanner(null)
+            navigate('settings')
+          }}
+        />
+      )}
       {instanceRole === 'duplicate' && !dupDismissed && (
         <div className="dup-banner" role="status">
           <span>检测到本应用可能已在其他标签打开。</span>
@@ -270,6 +339,7 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
           setSettings((s) => ({ ...s, theme: th }))
         }}
         dataStatus={dataStatus}
+        updateBadge={updateBadge}
       />
       <main className="main">
         {canGoBack && (
@@ -353,6 +423,16 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
               setTheme(th)
               setSettings((s) => ({ ...s, theme: th }))
             }}
+            onUpdateAvailable={(info) => {
+              setUpdateBadge(true)
+              setUpdateBanner({
+                latestVersion: info.latestVersion,
+                currentVersion: info.currentVersion,
+                meta: info.meta,
+                context: isNativeAndroid() ? 'android' : 'web',
+              })
+            }}
+            onClearUpdateBadge={() => setUpdateBadge(false)}
           />
         )}
       </main>

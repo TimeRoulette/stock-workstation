@@ -1,14 +1,51 @@
-# Android 安装说明（v0.11）
+# Android 安装与应用内更新（v0.12.1）
 
 ## 结论（先看这里）
 
 | 路径 | 能否「安装」 | 稳定性 | 说明 |
 |------|-------------|--------|------|
 | **PWA「添加到主屏幕」** | ✅ 推荐日常 | 最高 | 已有 `manifest.webmanifest` + Service Worker；Chrome/Edge「安装应用」或「添加到主屏幕」。**零打包、零签名。** |
-| **Capacitor / TWA 包一层 APK** | ✅ 可出 debug APK | 中 | 打开同一 GitHub Pages 或内置 `dist/` assets。需 Android SDK / Gradle；本仓库提供脚手架 + **GitHub Actions** 构建 debug APK。 |
+| **Capacitor / TWA 包一层 APK** | ✅ 可出 debug APK | 中 | 打开同一 GitHub Pages 或内置 `dist/` assets。需 Android SDK / Gradle；本仓库提供脚手架 + **GitHub Actions** 构建 debug APK。自 **v0.12.1** 起支持**应用内检查更新**（用户可选）。 |
 | **Electron** | ❌ | — | **不能**出安卓包；仅 Windows / macOS / Linux 桌面。 |
 
-**不承诺**上架 Google Play / 国内应用商店。仓库/Actions 产出的为 **debug 签名** APK，仅供自用测试。
+**不承诺**上架 Google Play / 国内应用商店。仓库/Actions 产出的为 **debug 签名** APK，仅供自用测试。同 debug 签名可**覆盖安装**。
+
+---
+
+## 应用内检查更新（v0.12.1+）
+
+### 行为
+
+- **设置 → 检查更新（Android APK）**：手动检查；展示**版本号 + changelog**；由你决定是否下载安装。
+- **启动后轻量检查**（默认开，可关）：有新版本时顶栏横幅 / 设置角标提示，**不打断、不强制、不静默升级**。
+- 元数据 URL（随 Pages 发布）：  
+  **https://timeroulette.github.io/stock-workstation/app-update.json**  
+  失败时回退 GitHub Releases API（`android-debug-latest`）。
+- 点「下载」会打开 APK 直链（系统下载器 / 浏览器）；再在系统安装界面确认。优先可靠路径，不做后台静默安装。
+
+### 旧版兼容（请诚实看待）
+
+- **从本版本（含检查器）起**，之后可用应用内更新到更新的 debug APK。
+- 已经装出去的 **0.11.0（或更早）旧包若当时没有检查器，无法凭空出现该功能**。
+- 请先**手动安装一次**带检查器的新包（soft Release 或本页直链），之后即可在设置里检查更新。
+- 网页 / PWA **不能**升级成 APK；站点可提示「安卓有新版本」并链到 APK，但不会假装能把 PWA 变成原生包。
+
+### 元数据字段示例
+
+```json
+{
+  "android": {
+    "latestVersion": "0.12.1",
+    "minVersion": "0.11.0",
+    "apkUrl": "https://github.com/TimeRoulette/stock-workstation/releases/download/android-debug-latest/stock-workstation-0.12.1-debug.apk",
+    "releasePage": "https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest",
+    "publishedAt": "ISO-8601",
+    "changelog": ["..."]
+  }
+}
+```
+
+CI（`android-apk.yml`）在 soft Release 成功后会刷新 `public/app-update.json` 并推回 `main`（随 Pages 发布）。版本比较为 semver。
 
 ---
 
@@ -32,6 +69,7 @@
 2. 手机：**设置 → 应用 → 特殊权限 / 安装未知应用** → 允许你用来下载的浏览器或「文件」应用
 3. 用文件管理器打开刚下的 `.apk` → **安装**
 4. 若出现「未知来源 / Play 保护机制」警告：选 **仍要安装**（debug 签名包常见，不是商店正式包）
+5. 覆盖安装：使用同一 debug 签名的新包可直接覆盖旧版，本地 sql.js 数据一般保留（仍建议设置里先备份）
 
 > 固定入口以后可收藏 soft tag；每次 Actions 成功会覆盖同名 Release 里的 APK。
 
@@ -54,6 +92,7 @@
 | 安装被拦截 / 灰色无法安装 | 未开「未知来源」或厂商拦截 debug 包 | 允许未知应用；关掉「纯净模式」后再试 |
 | 能装但一点图标就闪退 | WebView / 网络 / 资源问题（较少见） | 先用 PWA 验证功能；清数据重装；看 logcat |
 | 文件极小或 0 字节 | 下载中断或下错文件 | 重新下；确认体积约数 MB |
+| 提示签名冲突无法覆盖 | 换过签名或装过不同包名 | 卸载旧包再装（会清数据；先备份） |
 
 配置见 `.github/workflows/android-apk.yml`（安装 `platforms;android-34` 等，避免已下架的 `tools` 包）。
 
@@ -89,6 +128,8 @@ npm run android:apk
 - **离线**：`capacitor.config.ts` 的 `webDir: 'dist'`，`cap sync` 把构建产物打进 APK（推荐自用；当前 CI 即此模式）。
 - **在线**：设置 `server.url` 为 Pages 地址（类似 TWA）；APK 只是浏览器壳，需联网，且受站点可用性影响。
 
+检查更新始终拉取 **Pages 上的** `app-update.json`（不依赖 APK 内置的可能过期副本）。
+
 ---
 
 ## 与 Bubblewrap / TWA
@@ -102,3 +143,4 @@ Google Bubblewrap 也可把 PWA 打成 TWA APK。本仓库优先 Capacitor，因
 - Electron → Android
 - 未授权券商 App 打包/爬取
 - 商店上架与正式 release 签名流程（可自行用 keystore 扩展）
+- 强制更新 / 静默升级 / 假装网页能升成 APK

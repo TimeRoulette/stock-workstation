@@ -39,6 +39,8 @@ interface Props {
   theme: ThemeMode
   onThemeChange: (theme: ThemeMode) => void
   dataStatus?: DataStatusSummary | null
+  /** 有 APK 新版本时在「设置」上角标 */
+  updateBadge?: boolean
 }
 
 export function Sidebar({
@@ -49,6 +51,7 @@ export function Sidebar({
   theme,
   onThemeChange,
   dataStatus,
+  updateBadge = false,
 }: Props) {
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -71,6 +74,9 @@ export function Sidebar({
           {item.key === 'watchlist' && alertCount > 0 && (
             <span className="nav-badge">{alertCount > 9 ? '9+' : alertCount}</span>
           )}
+          {item.key === 'settings' && updateBadge && (
+            <span className="nav-badge update" title="有新版本">↑</span>
+          )}
         </span>
         {!opts?.mobileTab && !collapsed && (
           <span className="nav-text">
@@ -92,7 +98,7 @@ export function Sidebar({
           {!collapsed && (
             <div className="brand-text">
               <h1>股票工作台</h1>
-              <p>v0.12.0 · 本地优先</p>
+              <p>v0.12.1 · 本地优先</p>
             </div>
           )}
           <button
@@ -160,7 +166,7 @@ export function Sidebar({
               <div className="brand-mark">股</div>
               <div className="brand-text">
                 <h1>股票工作台</h1>
-                <p>v0.12.0 · 本地优先</p>
+                <p>v0.12.1 · 本地优先</p>
               </div>
               <button
                 type="button"

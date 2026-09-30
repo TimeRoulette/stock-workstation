@@ -40,7 +40,7 @@ export interface WorkstationBackup {
   }
 }
 
-export function exportWorkstationBackup(appVersion = '0.12.0'): WorkstationBackup {
+export function exportWorkstationBackup(appVersion = '0.12.1'): WorkstationBackup {
   const settings = db.getSettings()
   let theme: 'light' | 'dark' = settings.theme
   try {

@@ -14,6 +14,7 @@ on:
       - 'vite.config.ts'
       - 'index.html'
       - 'docs/android.md'
+      - 'scripts/write-app-update.mjs'
 
 concurrency:
   group: android-apk
@@ -25,11 +26,16 @@ permissions:
 
 jobs:
   apk:
+    # 避免 bot 回写 app-update.json 再次触发本 workflow
+    if: github.event_name == 'workflow_dispatch' || github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 便于回写 app-update.json 时 push
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -59,7 +65,7 @@ jobs:
 
       - name: Install Capacitor
         run: |
-          npm install -D @capacitor/cli@6 @capacitor/core@6 @capacitor/android@6
+          npm install -D @capacitor/cli@6 @capacitor/core@6 @capacitor/android@6 @capacitor/app@6 @capacitor/browser@6
 
       - name: Add & sync Android project
         run: |
@@ -111,6 +117,7 @@ jobs:
           - 签名：**debug**（非正式上架包）
           - 提交：\`${GITHUB_SHA}\`
           - Actions：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+          - 更新元数据：https://timeroulette.github.io/stock-workstation/app-update.json
 
           ### 安装步骤（必读）
 
@@ -118,11 +125,13 @@ jobs:
           2. 手机：设置 → 允许「未知来源 / 安装未知应用」（浏览器或文件管理器）。
           3. 用文件管理器打开刚下的 \`.apk\` → 安装。
           4. 若系统拦截「有害应用警告」，选「仍要安装 / 更多详情」（debug 签名常见）。
+          5. **同 debug 签名可覆盖安装**；从带「检查更新」的版本起，可在设置里应用内检查并可选更新。
 
           ### 注意
 
           - **不要**把 GitHub Actions Artifacts 页面下到的 zip 直接当 APK 打开；那是压缩包，需先解压。
           - 本 soft tag \`android-debug-latest\` 每次构建会覆盖，便于固定链接下载。
+          - 已经装出去的旧包（如 0.11.0）若当时没有检查器，需**手动装一次**带检查器的新包，之后才可应用内更新。
           - 日常更推荐 PWA：https://timeroulette.github.io/stock-workstation/
           MD
           )
@@ -135,3 +144,31 @@ jobs:
             --notes "$NOTES" \
             --latest=false
           echo "Release URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
+
+      - name: Refresh app-update.json and push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.stage.outputs.version }}"
+          APK_NAME="${{ steps.stage.outputs.apk_name }}"
+          APK_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/android-debug-latest/${APK_NAME}"
+          # changelog：本提交标题 + 最近若干条
+          CHANGELOG_LINES=$(git log -8 --pretty=format:'%s')
+          VERSION="$VERSION" \
+            APK_URL="$APK_URL" \
+            PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            CHANGELOG_LINES="$CHANGELOG_LINES" \
+            node scripts/write-app-update.mjs
+
+          if git diff --quiet -- public/app-update.json; then
+            echo "app-update.json unchanged"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/app-update.json
+          git commit -m "chore(android): refresh app-update.json for v${VERSION} [skip android]"
+          # Pages 会因 main 推送而部署；本 job 对 github-actions[bot] 已跳过，避免循环
+          git push origin HEAD:main

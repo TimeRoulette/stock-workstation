@@ -2,7 +2,7 @@
 
 跨平台个人股票工作台：盯盘自选、指标图表、价格提醒、模拟持仓、日报简报、复盘笔记。本地优先（SQLite / sql.js），中文界面，无需 API Key。
 
-**当前版本：v0.12.0** — 数据态直白文案 · 行情加固（多中继/自备代理/Electron 原生 HTTP/交叉校验）· 模拟挂单部分成交与改单 · 费率/风控 · 实盘对账与对比。
+**当前版本：v0.12.1** — Android 应用内检查更新（可选）· 数据态直白文案 · 行情加固 · 模拟/实盘加深。
 
 ## 30 秒上手
 
@@ -24,7 +24,7 @@ npm run dev
 
 ## 截图
 
-`screenshots/` 保留核心流程示意（盯盘 / 模拟 / 复盘 / 设置健康）。界面文案与侧栏以 **v0.12** 为准（数据态「最新/延时/旧行情/演示」）；若示意截图仍为较早版本布局，以线上演示为准。
+`screenshots/` 保留核心流程示意（盯盘 / 模拟 / 复盘 / 设置健康）。界面文案与侧栏以 **v0.12.1** 为准（数据态「最新/延时/旧行情/演示」）；若示意截图仍为较早版本布局，以线上演示为准。
 
 ## 在线演示（GitHub Pages）
 
@@ -45,7 +45,7 @@ npm run dev
 VITE_BASE=/REPO/ npm run build
 ```
 
-## 功能一览（v0.12）
+## 功能一览（v0.12.1）
 
 | 能力 | 说明 |
 |------|------|
@@ -60,7 +60,7 @@ VITE_BASE=/REPO/ npm run build
 | CSV 重算 | 导入可选按成交回放现金；一键修复现金漂移 |
 | 日报 | 早盘分区 · **结构化汇总分析**（着色强调）· **自选价量+新闻命中表** · 外链窗口复用 · 多源聚合 |
 | 复盘 | 结构化模板（计划/情绪/偏差/教训/标签）· 筛选 · 导出 MD/CSV · 关联成交 |
-| 设置 | 行情健康（通/挂）、**自备代理**、模拟费率/风控、主题、免打扰、通知、备份、PWA、账户重置 |
+| 设置 | 行情健康（通/挂）、**检查更新（APK）**、**自备代理**、模拟费率/风控、主题、免打扰、通知、备份、PWA、账户重置 |
 
 高级选项（术语词典、自定义提醒、CSV、账户重置）默认收在 **「高级」** 折叠里。
 
@@ -166,6 +166,14 @@ stock-workstation/
 | `npm run validate` | 技术选股 / 绩效规则自检 |
 | `npm run android:add` / `android:sync` | Capacitor 安卓工程（需本机 SDK 或用 Actions） |
 
+## 变更摘要 · v0.12.1
+
+- **Android 应用内检查更新**：设置页「检查更新」；展示版本号 + changelog；用户自行决定是否下载安装（不强制、不静默）
+- 启动后可轻量检查（有新版本时横幅/设置角标，可关掉自动检查）
+- `public/app-update.json` 随 Pages 发布；CI 打 APK 后自动刷新 latestVersion / apkUrl / changelog
+- **诚实说明**：已装出去的旧 0.11.0 若当时无检查器，需手动装一次带检查器的新包，之后才可应用内更新
+- 网页可提示「安卓有新版本」并链到 APK，不假装 PWA 能升成原生包；同 debug 签名可覆盖安装
+
 ## 变更摘要 · v0.12.0
 
 - **数据态文案**：顶栏/列表/日报统一为「最新 / 延时 / 旧行情 / 演示」；内部枚举兼容；Pages 标明「公开站·桌面更准」
@@ -268,8 +276,11 @@ stock-workstation/
 2. **可安装 APK（debug）**：优先从 soft Release 直下 `.apk` →  
    https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest  
    （允许「未知来源」后安装）。Actions Artifacts 下到的是 **zip，必须先解压** 才能得到 `.apk`。
-3. **Capacitor** 脚手架可本机打包（需 Android SDK）；CI 见 `.github/workflows/android-apk.yml`。
-4. **Electron 不能出安卓**。不承诺应用商店上架；签名为 debug。
+3. **应用内检查更新（v0.12.1+）**：设置页手动检查 + 可选启动提示；元数据  
+   https://timeroulette.github.io/stock-workstation/app-update.json  
+   旧 0.11.0 无检查器需**手动升一次**；同 debug 签名可覆盖安装。
+4. **Capacitor** 脚手架可本机打包（需 Android SDK）；CI 见 `.github/workflows/android-apk.yml`。
+5. **Electron 不能出安卓**。不承诺应用商店上架；签名为 debug。
 
 ## 限制与声明
 
@@ -285,5 +296,5 @@ stock-workstation/
 - PWA/命名窗口无法保证任意外链 100% 合并到同一浏览器标签
 - 实盘数据为用户手动导入，仅本地存储；非券商对接，不做未授权爬取登录
 - LLM Key 仅 Electron 本机存储，不会进入 GitHub Pages 构建产物
-- Android debug APK 仅供自测，非商店发行版
+- Android debug APK 仅供自测，非商店发行版；检查更新不强制、不静默；网页不能升成 APK
 - 本工具仅供个人学习，**不构成投资建议**

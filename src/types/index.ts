@@ -260,6 +260,8 @@ export interface AppSettings {
   riskMaxPositionPct: number
   /** 日内亏损提醒（占净值比例，0=关闭，默认 0.03） */
   riskDailyLossPct: number
+  /** 启动后轻量检查 APK 更新（默认开；可关） */
+  autoCheckUpdate: boolean
 }
 
 export interface QuoteProvider {

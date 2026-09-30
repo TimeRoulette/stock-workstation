@@ -354,6 +354,7 @@ function seedIfEmpty() {
   if (getSetting('paperStampTaxRate') == null) setSetting('paperStampTaxRate', '0.0005')
   if (getSetting('riskMaxPositionPct') == null) setSetting('riskMaxPositionPct', '0.35')
   if (getSetting('riskDailyLossPct') == null) setSetting('riskDailyLossPct', '0.03')
+  if (getSetting('autoCheckUpdate') == null) setSetting('autoCheckUpdate', '1')
 
   const snapCount = queryOne<{ c: number }>(
     'SELECT COUNT(*) FROM equity_snapshots',
@@ -420,6 +421,7 @@ export function getSettings(): AppSettings {
     paperStampTaxRate: Number(getSetting('paperStampTaxRate') ?? 0.0005),
     riskMaxPositionPct: Number(getSetting('riskMaxPositionPct') ?? 0.35),
     riskDailyLossPct: Number(getSetting('riskDailyLossPct') ?? 0.03),
+    autoCheckUpdate: getSetting('autoCheckUpdate') !== '0',
   }
 }
 
@@ -1368,6 +1370,7 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
   if (s.paperStampTaxRate != null) setSetting('paperStampTaxRate', String(s.paperStampTaxRate))
   if (s.riskMaxPositionPct != null) setSetting('riskMaxPositionPct', String(s.riskMaxPositionPct))
   if (s.riskDailyLossPct != null) setSetting('riskDailyLossPct', String(s.riskDailyLossPct))
+  if (s.autoCheckUpdate != null) setSetting('autoCheckUpdate', s.autoCheckUpdate ? '1' : '0')
 }
 
 

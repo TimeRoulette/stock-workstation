@@ -223,4 +223,21 @@ const w = weights([70, 30])
 assert(Math.abs(w[0] - 70) < 1e-9 && Math.abs(w[1] - 30) < 1e-9, '集中度 70/30')
 ok('集中度')
 
+// —— semver（与 appUpdate.compareSemver 对齐的轻量自检）——
+function parseSemver(v) {
+  const clean = String(v || '').trim().replace(/^v/i, '').split(/[-+]/)[0]
+  const parts = clean.split('.').map((p) => Number.parseInt(p, 10))
+  return [parts[0] || 0, parts[1] || 0, parts[2] || 0]
+}
+function compareSemver(a, b) {
+  const pa = parseSemver(a), pb = parseSemver(b)
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i]
+  return 0
+}
+assert(compareSemver('0.12.1', '0.12.0') > 0, '0.12.1 > 0.12.0')
+assert(compareSemver('0.12.0', '0.12.0') === 0, 'equal')
+assert(compareSemver('0.11.0', '0.12.1') < 0, '0.11 < 0.12.1')
+assert(compareSemver('v0.12.1', '0.12.1') === 0, 'v prefix')
+ok('semver')
+
 console.log(`validate-tech: OK (${passed} groups)`)
