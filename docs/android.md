@@ -45,7 +45,9 @@
 }
 ```
 
-CI（`android-apk.yml`）在 soft Release 成功后会刷新 `public/app-update.json` 并推回 `main`（随 Pages 发布）。版本比较为 semver。
+CI（`android-apk.yml`）在 soft Release 成功后会刷新 `public/app-update.json` 并推回 `main`。版本比较为 semver。
+
+> 说明：用默认 `GITHUB_TOKEN` 推送**不会**再触发 `pages.yml`（GitHub 平台限制）。发版提交里应已写入正确的 `apkUrl`（soft tag），Pages 随该提交部署即可用；bot 回写主要用于仓库内 `publishedAt`/changelog。若要立刻同步 bot 回写到线上，可在 Actions 里手动跑一次 **Deploy GitHub Pages**。
 
 ---
 

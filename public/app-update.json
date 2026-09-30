@@ -4,9 +4,13 @@
     "minVersion": "0.11.0",
     "apkUrl": "https://github.com/TimeRoulette/stock-workstation/releases/download/android-debug-latest/stock-workstation-0.12.1-debug.apk",
     "releasePage": "https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest",
-    "publishedAt": "2026-09-30T02:38:22Z",
+    "publishedAt": "2026-09-30T10:38:22+08:00",
     "changelog": [
-      "feat(v0.12.1): Android 应用内检查更新（可选）"
+      "应用内检查更新：展示版本号与更新内容，用户自行决定是否更新（不强制、不静默）",
+      "设置页「检查更新」+ 启动后轻量提示（可关闭自动检查）",
+      "维护 public/app-update.json（随 Pages 发布）；CI 打 APK 后自动刷新元数据并部署 Pages",
+      "说明：已装出去的旧 0.11.0 若当时无检查器，需手动装一次带检查器的包后才可应用内更新",
+      "同 debug 签名可覆盖安装"
     ]
   }
 }

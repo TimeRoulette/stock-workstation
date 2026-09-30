@@ -26,16 +26,20 @@ permissions:
 
 jobs:
   apk:
-    # 避免 bot 回写 app-update.json 再次触发本 workflow
-    if: github.event_name == 'workflow_dispatch' || github.actor != 'github-actions[bot]'
+    # 避免 bot 回写 / [skip android] 再次触发本 workflow
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.actor != 'github-actions[bot]' &&
+       !contains(github.event.head_commit.message, '[skip android]'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # 便于回写 app-update.json 时 push
+          # 便于回写 app-update.json 与生成 changelog
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 30
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -153,22 +157,27 @@ jobs:
           VERSION="${{ steps.stage.outputs.version }}"
           APK_NAME="${{ steps.stage.outputs.apk_name }}"
           APK_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/android-debug-latest/${APK_NAME}"
-          # changelog：本提交标题 + 最近若干条
-          CHANGELOG_LINES=$(git log -8 --pretty=format:'%s')
+          # fetch-depth:30；拼可读 changelog（版本标题 + 最近提交）
+          {
+            echo "Android debug APK v${VERSION}（含应用内检查更新；soft Release）"
+            git log -8 --pretty=format:'%s'
+            echo
+          } > /tmp/changelog.txt
           VERSION="$VERSION" \
             APK_URL="$APK_URL" \
             PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            CHANGELOG_LINES="$CHANGELOG_LINES" \
+            CHANGELOG_LINES="$(cat /tmp/changelog.txt)" \
             node scripts/write-app-update.mjs
 
+          # 注意：GITHUB_TOKEN 的 push 不会触发 pages.yml；
+          # 版本发布提交里应已带齐 app-update.json（apkUrl 指向 soft tag），Pages 随该提交部署。
+          # 本步回写仓库内元数据（publishedAt/changelog），下次人工推送或 Pages workflow_dispatch 会同步线上。
           if git diff --quiet -- public/app-update.json; then
             echo "app-update.json unchanged"
             exit 0
           fi
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public/app-update.json
           git commit -m "chore(android): refresh app-update.json for v${VERSION} [skip android]"
-          # Pages 会因 main 推送而部署；本 job 对 github-actions[bot] 已跳过，避免循环
           git push origin HEAD:main
