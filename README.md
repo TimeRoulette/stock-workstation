@@ -170,7 +170,7 @@ stock-workstation/
 - **Electron**：托盘、关闭驻留、开机自启（平台不支持时如实说明）
 - **无障碍**：`prefers-reduced-motion`、表格键盘焦点、对比度微调；移动端全市场扫描降级引导加强
 - **可选 LLM**：默认关；Key 仅 Electron userData；Pages 无 Key 入口
-- **Android**：README/`docs/android.md` 路径对比；Capacitor 脚手架 + Actions 打 debug APK artifact（不承诺上架）
+- **Android**：README/`docs/android.md`；Capacitor + Actions debug APK；soft Release `android-debug-latest` 直链（artifact 为 zip 需解压；不承诺上架）
 
 ## 变更摘要 · v0.10.0
 
@@ -253,8 +253,11 @@ stock-workstation/
 详见 **[docs/android.md](./docs/android.md)**。摘要：
 
 1. **日常推荐 PWA**「添加到主屏幕」（已有 manifest），零打包最稳。
-2. **Capacitor** 可包 debug APK（打开 Pages 或内置 `dist`）；本机需 Android SDK；**GitHub Actions → Build Android Debug APK** 上传 artifact `stock-workstation-debug-apk`。
-3. **Electron 不能出安卓**。不承诺应用商店上架；签名为 debug。
+2. **可安装 APK（debug）**：优先从 soft Release 直下 `.apk` →  
+   https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest  
+   （允许「未知来源」后安装）。Actions Artifacts 下到的是 **zip，必须先解压** 才能得到 `.apk`。
+3. **Capacitor** 脚手架可本机打包（需 Android SDK）；CI 见 `.github/workflows/android-apk.yml`。
+4. **Electron 不能出安卓**。不承诺应用商店上架；签名为 debug。
 
 ## 限制与声明
 

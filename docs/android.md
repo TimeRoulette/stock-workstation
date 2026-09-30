@@ -22,6 +22,45 @@
 
 ---
 
+## 最快拿到可安装的 `.apk`（推荐）
+
+每次成功构建会刷新 soft Release：
+
+**https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest**
+
+1. 打开上面链接 → **Assets** 里点 `stock-workstation-*-debug.apk`（扩展名必须是 **`.apk`**）
+2. 手机：**设置 → 应用 → 特殊权限 / 安装未知应用** → 允许你用来下载的浏览器或「文件」应用
+3. 用文件管理器打开刚下的 `.apk` → **安装**
+4. 若出现「未知来源 / Play 保护机制」警告：选 **仍要安装**（debug 签名包常见，不是商店正式包）
+
+> 固定入口以后可收藏 soft tag；每次 Actions 成功会覆盖同名 Release 里的 APK。
+
+---
+
+## 从 GitHub Actions Artifact 下载（容易踩坑）
+
+1. 打开 [Actions → Build Android Debug APK](https://github.com/TimeRoulette/stock-workstation/actions/workflows/android-apk.yml)
+2. 点进最近一次 **绿色成功** 的 run → 页面底部 **Artifacts**
+3. 下载 `stock-workstation-debug-apk`
+4. **重要：** 浏览器下到的是 **`.zip` 压缩包**（GitHub 固定行为），**不能**直接当 APK 打开。
+5. 解压 zip → 得到 `stock-workstation-*-debug.apk`（或旧产物名 `app-debug.apk`）
+6. 再按上一节「允许未知来源 → 安装」
+
+### 「下载打开不了」常见原因
+
+| 现象 | 原因 | 处理 |
+|------|------|------|
+| 点开下载文件提示无法解析 / 不是有效安装包 | 把 **artifact zip** 当成 APK 打开 | **先解压**，再装里面的 `.apk`；或改用 soft Release 直链 |
+| 安装被拦截 / 灰色无法安装 | 未开「未知来源」或厂商拦截 debug 包 | 允许未知应用；关掉「纯净模式」后再试 |
+| 能装但一点图标就闪退 | WebView / 网络 / 资源问题（较少见） | 先用 PWA 验证功能；清数据重装；看 logcat |
+| 文件极小或 0 字节 | 下载中断或下错文件 | 重新下；确认体积约数 MB |
+
+配置见 `.github/workflows/android-apk.yml`（安装 `platforms;android-34` 等，避免已下架的 `tools` 包）。
+
+若 Actions 失败：打开该次 run 日志；常见原因是 SDK 组件名变更或 Capacitor/Gradle 版本不匹配，可按日志改 workflow 后 `workflow_dispatch` 重跑。
+
+---
+
 ## Capacitor 脚手架（本仓库）
 
 ### 本机（需 Android SDK）
@@ -43,22 +82,11 @@ npm run android:apk
 - **Android SDK**（`ANDROID_HOME`）与 platform-tools、build-tools、一个 platform（如 34）
 - **Gradle**（由 Android 工程 wrapper 拉取）
 
-本 CI/开发 box 若未装 SDK，则**无法在本地打出正式/debug APK**；请用下方 Actions。
-
-### GitHub Actions 下载 debug APK
-
-1. 打开仓库 **Actions → Build Android Debug APK**
-2. 手动 **Run workflow**，或 push 到 `main` 后按 workflow 配置触发
-3. 完成后在该次 run 的 **Artifacts** 下载 `stock-workstation-debug-apk`
-4. 手机需允许「未知来源」安装；为 debug 签名，**不能**当商店包
-
-配置见 `.github/workflows/android-apk.yml`（安装 `platforms;android-34` 等，避免已下架的 `tools` 包）。
-
-若 Actions 失败：打开该次 run 日志；常见原因是 SDK 组件名变更或 Capacitor/Gradle 版本不匹配，可按日志改 workflow 后 `workflow_dispatch` 重跑。
+本 CI/开发 box 若未装 SDK，则**无法在本地打出正式/debug APK**；请用上方 Actions / soft Release。
 
 ### 在线壳 vs 离线 assets
 
-- **离线**：`capacitor.config.ts` 的 `webDir: 'dist'`，`cap sync` 把构建产物打进 APK（推荐自用）。
+- **离线**：`capacitor.config.ts` 的 `webDir: 'dist'`，`cap sync` 把构建产物打进 APK（推荐自用；当前 CI 即此模式）。
 - **在线**：设置 `server.url` 为 Pages 地址（类似 TWA）；APK 只是浏览器壳，需联网，且受站点可用性影响。
 
 ---

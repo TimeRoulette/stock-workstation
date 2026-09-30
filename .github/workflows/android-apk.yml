@@ -13,10 +13,15 @@ on:
       - '.github/workflows/android-apk.yml'
       - 'vite.config.ts'
       - 'index.html'
+      - 'docs/android.md'
 
 concurrency:
   group: android-apk
   cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: read
 
 jobs:
   apk:
@@ -67,10 +72,66 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
+      - name: Stage named APK
+        id: stage
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          mkdir -p out
+          SRC=$(ls android/app/build/outputs/apk/debug/*.apk | head -1)
+          test -n "$SRC" && test -s "$SRC"
+          DEST="out/stock-workstation-${VERSION}-debug.apk"
+          cp "$SRC" "$DEST"
+          ls -la "$DEST"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "apk_path=${DEST}" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$(basename "$DEST")" >> "$GITHUB_OUTPUT"
+
+      # Actions artifact 下载得到的永远是「整包 zip」，需解压才有 .apk
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: stock-workstation-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
+          path: ${{ steps.stage.outputs.apk_path }}
           if-no-files-found: error
           retention-days: 14
+
+      # soft release：浏览器可直接下 .apk（无需登录解压 artifact zip）
+      - name: Publish soft Release (direct APK)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=android-debug-latest
+          VERSION="${{ steps.stage.outputs.version }}"
+          APK="${{ steps.stage.outputs.apk_path }}"
+          NOTES=$(cat <<MD
+          ## Android debug APK（自用测试）
+
+          - 版本：v${VERSION}
+          - 签名：**debug**（非正式上架包）
+          - 提交：\`${GITHUB_SHA}\`
+          - Actions：${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          ### 安装步骤（必读）
+
+          1. 点下方 Assets 里的 **\`stock-workstation-${VERSION}-debug.apk\`** 下载（扩展名必须是 \`.apk\`，不是 \`.zip\`）。
+          2. 手机：设置 → 允许「未知来源 / 安装未知应用」（浏览器或文件管理器）。
+          3. 用文件管理器打开刚下的 \`.apk\` → 安装。
+          4. 若系统拦截「有害应用警告」，选「仍要安装 / 更多详情」（debug 签名常见）。
+
+          ### 注意
+
+          - **不要**把 GitHub Actions Artifacts 页面下到的 zip 直接当 APK 打开；那是压缩包，需先解压。
+          - 本 soft tag \`android-debug-latest\` 每次构建会覆盖，便于固定链接下载。
+          - 日常更推荐 PWA：https://timeroulette.github.io/stock-workstation/
+          MD
+          )
+          # 覆盖同名 soft release / tag（不存在则忽略）
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          # 等一下避免 tag 删除后立刻重建偶发冲突
+          sleep 2
+          gh release create "$TAG" "$APK" \
+            --title "Android Debug APK (v${VERSION})" \
+            --notes "$NOTES" \
+            --latest=false
+          echo "Release URL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
