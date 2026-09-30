@@ -38,8 +38,11 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # 勿安装已下架的旧包名 `tools`（setup-android 默认会装，导致失败）
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools platforms;android-34 build-tools;34.0.0
 
       - name: Install npm deps
         run: npm ci
@@ -55,7 +58,7 @@ jobs:
 
       - name: Add & sync Android project
         run: |
-          npx cap add android || true
+          npx cap add android
           npx cap sync android
 
       - name: Assemble debug APK

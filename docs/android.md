@@ -52,7 +52,9 @@ npm run android:apk
 3. 完成后在该次 run 的 **Artifacts** 下载 `stock-workstation-debug-apk`
 4. 手机需允许「未知来源」安装；为 debug 签名，**不能**当商店包
 
-配置见 `.github/workflows/android-apk.yml`。
+配置见 `.github/workflows/android-apk.yml`（安装 `platforms;android-34` 等，避免已下架的 `tools` 包）。
+
+若 Actions 失败：打开该次 run 日志；常见原因是 SDK 组件名变更或 Capacitor/Gradle 版本不匹配，可按日志改 workflow 后 `workflow_dispatch` 重跑。
 
 ### 在线壳 vs 离线 assets
 
