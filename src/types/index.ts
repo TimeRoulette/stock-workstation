@@ -248,8 +248,14 @@ export interface AppSettings {
   electronOpenAtLogin: boolean
   /** Electron：关闭时最小化到托盘 */
   electronMinimizeToTray: boolean
-  /** 可选 LLM 总结（默认关；Key 仅本机/Electron） */
+  /** 可选 LLM 总结（默认关；Key 仅本机 Electron/APK） */
   llmSummaryEnabled: boolean
+  /** LLM 供应商 id（见 llmProviders） */
+  llmProvider: string
+  /** OpenAI 兼容 Base URL（如 https://api.deepseek.com/v1） */
+  llmBaseUrl: string
+  /** 模型 id */
+  llmModel: string
   /** 自备行情代理 URL（CORS 中继前缀或完整网关；不进仓库密钥） */
   quoteProxyUrl: string
   /** 模拟佣金费率（默认 0.0003 = 0.03%） */

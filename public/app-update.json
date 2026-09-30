@@ -1,20 +1,16 @@
 {
   "android": {
-    "latestVersion": "0.12.2",
+    "latestVersion": "0.12.3",
     "minVersion": "0.11.0",
-    "apkUrl": "https://github.com/TimeRoulette/stock-workstation/releases/download/android-debug-latest/stock-workstation-0.12.2-debug.apk",
+    "apkUrl": "https://github.com/TimeRoulette/stock-workstation/releases/download/android-debug-latest/stock-workstation-0.12.3-debug.apk",
     "releasePage": "https://github.com/TimeRoulette/stock-workstation/releases/tag/android-debug-latest",
-    "publishedAt": "2026-09-30T02:56:06Z",
+    "publishedAt": "2026-09-30T11:01:13+08:00",
     "changelog": [
-      "Android debug APK v0.12.2（含应用内检查更新；soft Release）",
-      "fix(v0.12.2): 减少误落演示——同花顺优先、中继与原生 HTTP",
-      "chore(android): clarify app-update changelog wording [skip android]",
-      "fix(android): 补全 app-update changelog，CI 加深 fetch-depth [skip android]",
-      "chore(android): refresh app-update.json for v0.12.1 [skip android]",
-      "feat(v0.12.1): Android 应用内检查更新（可选）",
-      "feat(v0.12.0): 数据态直白文案、行情加固、模拟/实盘加深",
-      "fix(android): soft Release 直链 APK，并写清 artifact zip 需解压",
-      "fix(android): Actions SDK 跳过已下架 tools 包"
+      "设置页按区块折叠（外观/行情/通知/LLM/备份/关于等），展开状态本机记住，手机友好",
+      "LLM：OpenAI 兼容供应商预设（DeepSeek/Kimi/智谱/通义/硅基/OpenRouter/Groq 等）+ 自定义，联动 Base URL 与模型，可刷新 /models",
+      "API Key 仅本机（Electron userData / APK 本地）；Pages 禁用 Key 输入",
+      "修复系统通知勾选：无权时仍可保留启用意图并提示授权，不再点了没反应",
+      "默认关闭 LLM；文案标明非投资建议"
     ]
   }
 }

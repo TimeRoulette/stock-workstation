@@ -349,6 +349,9 @@ function seedIfEmpty() {
   if (getSetting('electronOpenAtLogin') == null) setSetting('electronOpenAtLogin', '0')
   if (getSetting('electronMinimizeToTray') == null) setSetting('electronMinimizeToTray', '0')
   if (getSetting('llmSummaryEnabled') == null) setSetting('llmSummaryEnabled', '0')
+  if (getSetting('llmProvider') == null) setSetting('llmProvider', 'deepseek')
+  if (getSetting('llmBaseUrl') == null) setSetting('llmBaseUrl', 'https://api.deepseek.com/v1')
+  if (getSetting('llmModel') == null) setSetting('llmModel', 'deepseek-chat')
   if (getSetting('quoteProxyUrl') == null) setSetting('quoteProxyUrl', '')
   if (getSetting('paperFeeRate') == null) setSetting('paperFeeRate', '0.0003')
   if (getSetting('paperStampTaxRate') == null) setSetting('paperStampTaxRate', '0.0005')
@@ -416,6 +419,9 @@ export function getSettings(): AppSettings {
     electronOpenAtLogin: getSetting('electronOpenAtLogin') === '1',
     electronMinimizeToTray: getSetting('electronMinimizeToTray') === '1',
     llmSummaryEnabled: getSetting('llmSummaryEnabled') === '1',
+    llmProvider: getSetting('llmProvider') || 'deepseek',
+    llmBaseUrl: getSetting('llmBaseUrl') || 'https://api.deepseek.com/v1',
+    llmModel: getSetting('llmModel') || 'deepseek-chat',
     quoteProxyUrl: getSetting('quoteProxyUrl') || '',
     paperFeeRate: Number(getSetting('paperFeeRate') ?? 0.0003),
     paperStampTaxRate: Number(getSetting('paperStampTaxRate') ?? 0.0005),
@@ -1365,6 +1371,9 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
   if (s.electronOpenAtLogin != null) setSetting('electronOpenAtLogin', s.electronOpenAtLogin ? '1' : '0')
   if (s.electronMinimizeToTray != null) setSetting('electronMinimizeToTray', s.electronMinimizeToTray ? '1' : '0')
   if (s.llmSummaryEnabled != null) setSetting('llmSummaryEnabled', s.llmSummaryEnabled ? '1' : '0')
+  if (s.llmProvider != null) setSetting('llmProvider', String(s.llmProvider))
+  if (s.llmBaseUrl != null) setSetting('llmBaseUrl', String(s.llmBaseUrl))
+  if (s.llmModel != null) setSetting('llmModel', String(s.llmModel))
   if (s.quoteProxyUrl != null) setSetting('quoteProxyUrl', String(s.quoteProxyUrl))
   if (s.paperFeeRate != null) setSetting('paperFeeRate', String(s.paperFeeRate))
   if (s.paperStampTaxRate != null) setSetting('paperStampTaxRate', String(s.paperStampTaxRate))

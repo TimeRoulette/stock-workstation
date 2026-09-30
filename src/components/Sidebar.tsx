@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ThemeToggle } from './ThemeToggle'
 import { DataStatusBadge } from './DataStatusBadge'
 import { Icons } from './Icon'
+import { APP_VERSION } from '../services/appUpdate'
 import type { ThemeMode } from '../utils/theme'
 import type { DataStatusSummary } from '../utils/dataStatus'
 
@@ -98,7 +99,7 @@ export function Sidebar({
           {!collapsed && (
             <div className="brand-text">
               <h1>股票工作台</h1>
-              <p>v0.12.1 · 本地优先</p>
+              <p>{`v${APP_VERSION} · 本地优先`}</p>
             </div>
           )}
           <button
@@ -166,7 +167,7 @@ export function Sidebar({
               <div className="brand-mark">股</div>
               <div className="brand-text">
                 <h1>股票工作台</h1>
-                <p>v0.12.1 · 本地优先</p>
+                <p>{`v${APP_VERSION} · 本地优先`}</p>
               </div>
               <button
                 type="button"
