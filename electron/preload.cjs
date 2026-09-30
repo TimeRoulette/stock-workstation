@@ -10,4 +10,5 @@ contextBridge.exposeInMainWorld('stockWorkstation', {
   setMinimizeToTray: (enabled) => ipcRenderer.invoke('sw:set-minimize-to-tray', enabled),
   getLlmKey: () => ipcRenderer.invoke('sw:llm-get-key'),
   setLlmKey: (key) => ipcRenderer.invoke('sw:llm-set-key', key),
+  httpFetch: (payload) => ipcRenderer.invoke('sw:http-fetch', payload),
 })

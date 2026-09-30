@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Advanced } from '../components/Advanced'
 import * as db from '../services/db'
-import { getProviderHealth, quoteService } from '../services/quotes'
+import { getProviderHealth, quoteService, syncQuoteProxyFromDb } from '../services/quotes'
 import { getScreenerHealth, probeScreener } from '../services/screener'
 import { fmtDateTime } from '../utils/format'
 import type { AppSettings, ProviderHealth, QuoteProviderMode } from '../types'
@@ -21,6 +21,7 @@ import {
 } from '../services/notify'
 import { Icons } from '../components/Icon'
 import { isPagesHost } from '../utils/dataStatus'
+import { HONEST_QUOTE_BOUNDARY, PAGES_QUOTE_HINT } from '../utils/dataStatusLabels'
 import {
   isLlmFeatureAvailable,
   loadLlmKey,
@@ -122,19 +123,19 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
   const statusLabel = (s: ProviderHealth['status']) => {
     switch (s) {
       case 'ok':
-        return '正常'
+        return '通'
       case 'degraded':
-        return '缓慢'
+        return '慢'
       case 'down':
-        return '不可用'
+        return '挂'
       case 'skipped':
         return '跳过'
       default:
-        return '未知'
+        return '未测'
     }
   }
 
-  const okCount = health.filter((h) => h.status === 'ok').length
+  const okCount = health.filter((h) => h.status === 'ok' || h.status === 'degraded').length
   const downCount = health.filter((h) => h.status === 'down').length
 
   return (
@@ -144,8 +145,8 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
           <h2>设置</h2>
           <p className="subtitle">
             行情健康
-            {health.length > 0 ? ` · ${okCount} 正常` : ''}
-            {downCount > 0 ? ` · ${downCount} 不可用` : ''}
+            {health.length > 0 ? ` · ${okCount} 通` : ''}
+            {downCount > 0 ? ` · ${downCount} 挂` : ''}
           </p>
         </div>
         <div className="toolbar">
@@ -171,7 +172,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                   <tr>
                     <th>源</th>
                     <th>状态</th>
-                    <th>延迟</th>
+                    <th>耗时</th>
                     <th>上次成功</th>
                     <th>说明</th>
                   </tr>
@@ -197,7 +198,9 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
               </table>
             )}
             <p className="muted" style={{ fontSize: 12, marginBottom: 0, marginTop: 8 }}>
-              进入本页会自动探测（真实轻量请求）。单源超时约 7s；失败立刻下一源。auto 对已知 down 源冷却约 3 分钟。缓存新鲜 TTL 30 分钟，可放宽至 24 小时后再 mock。日报源（人民日报 / 央视 / 华尔街见闻 / BBC / 美联储 / 东财榜）亦在此探测。
+              进入本页会自动探测（真实轻量请求）。「通」=可用，「挂」=失败冷却中，「慢」=偏慢。单源超时约 7s；失败立刻下一源并退避。auto 对已知挂掉的源冷却约 3 分钟。旧行情新鲜 TTL 30 分钟，可放宽至 24 小时后再用演示数据（绝不会把演示标成最新）。日报源亦在此探测。
+              {isPagesHost() ? ` ${PAGES_QUOTE_HINT}` : ' Electron/本机可走原生 HTTP，通常比公开站更稳。'}
+              {' '}{HONEST_QUOTE_BOUNDARY}
             </p>
           </div>
         </div>
@@ -232,7 +235,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                     <span className="health-pill health-ok">已接</span>
                   </td>
                   <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
-                    clist pn/pz 分页至前200；行业/概念板块榜；成分股龙头/中军；失败回退示意
+                    clist pn/pz 分页至前200；行业/概念板块榜；成分股龙头/中军；失败回退演示数据
                   </td>
                 </tr>
                 <tr>
@@ -282,7 +285,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                     <span className="health-pill health-ok">已接</span>
                   </td>
                   <td className="muted" style={{ whiteSpace: 'normal', fontSize: 12 }}>
-                    量价洗盘 / MACD 金叉 / 突破回踩；前200按需拉K线；示意数据不计命中
+                    量价洗盘 / MACD 金叉 / 突破回踩；前200按需拉K线；演示数据不计命中
                   </td>
                 </tr>
                 <tr>
@@ -377,11 +380,11 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                 value={settings.quoteProvider}
                 onChange={(e) => saveProvider(e.target.value as QuoteProviderMode)}
               >
-                <option value="auto">自动（东财 → 新浪 → 同花顺 → Yahoo → 缓存 → 模拟）</option>
+                <option value="auto">自动（东财 → 新浪 → 同花顺 → Yahoo → 旧行情 → 演示）</option>
                 <option value="eastmoney">东方财富优先</option>
                 <option value="ths">同花顺优先</option>
                 <option value="yahoo">Yahoo Finance 优先</option>
-                <option value="mock">仅本地模拟</option>
+                <option value="mock">仅本地演示数据</option>
               </select>
             </div>
             <div className="form-row">
@@ -396,6 +399,110 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
                 <option value={60}>60</option>
                 <option value={0}>手动</option>
               </select>
+            </div>
+          </div>
+        </div>
+
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">自备行情代理（可选）</div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              填写你自己的 CORS 中继或网关（仅存本机，不进仓库）。支持完整前缀、末尾 <code>?url=</code>，或带 <code>{'{url}'}</code> 占位。
+              Pages 静态站无密钥；桌面版优先原生 HTTP。
+            </p>
+            <div className="form-row">
+              <label>代理 URL</label>
+              <input
+                className="input"
+                style={{ maxWidth: 420 }}
+                placeholder="https://your-relay.example/proxy?url="
+                value={settings.quoteProxyUrl || ''}
+                onChange={(e) => {
+                  const v = e.target.value.trim()
+                  db.setSetting('quoteProxyUrl', v)
+                  try {
+                    localStorage.setItem('sw-quote-proxy-url', v)
+                  } catch {
+                    /* */
+                  }
+                  syncQuoteProxyFromDb()
+                  onChange({ ...settings, quoteProxyUrl: v })
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">模拟费率与本地风控</div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              费率仅用于纸上成交扣减现金；印花税仅卖出计。风控为本地提醒，非强制平仓、非券商规则。
+            </p>
+            <div className="form-row">
+              <label>佣金费率</label>
+              <input
+                className="input"
+                style={{ maxWidth: 120 }}
+                inputMode="decimal"
+                value={String(settings.paperFeeRate ?? 0.0003)}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v) || v < 0) return
+                  db.setSetting('paperFeeRate', String(v))
+                  onChange({ ...settings, paperFeeRate: v })
+                }}
+              />
+              <span className="muted" style={{ fontSize: 12 }}>默认 0.0003（0.03%）</span>
+            </div>
+            <div className="form-row">
+              <label>印花税（卖）</label>
+              <input
+                className="input"
+                style={{ maxWidth: 120 }}
+                inputMode="decimal"
+                value={String(settings.paperStampTaxRate ?? 0.0005)}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v) || v < 0) return
+                  db.setSetting('paperStampTaxRate', String(v))
+                  onChange({ ...settings, paperStampTaxRate: v })
+                }}
+              />
+              <span className="muted" style={{ fontSize: 12 }}>默认 0.0005；买不加</span>
+            </div>
+            <div className="form-row">
+              <label>单票仓位上限</label>
+              <input
+                className="input"
+                style={{ maxWidth: 120 }}
+                inputMode="decimal"
+                value={String(settings.riskMaxPositionPct ?? 0.35)}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v) || v < 0) return
+                  db.setSetting('riskMaxPositionPct', String(v))
+                  onChange({ ...settings, riskMaxPositionPct: v })
+                }}
+              />
+              <span className="muted" style={{ fontSize: 12 }}>占净值；0=关闭提醒</span>
+            </div>
+            <div className="form-row">
+              <label>日内亏损提醒</label>
+              <input
+                className="input"
+                style={{ maxWidth: 120 }}
+                inputMode="decimal"
+                value={String(settings.riskDailyLossPct ?? 0.03)}
+                onChange={(e) => {
+                  const v = Number(e.target.value)
+                  if (!Number.isFinite(v) || v < 0) return
+                  db.setSetting('riskDailyLossPct', String(v))
+                  onChange({ ...settings, riskDailyLossPct: v })
+                }}
+              />
+              <span className="muted" style={{ fontSize: 12 }}>占净值；0=关闭</span>
             </div>
           </div>
         </div>
@@ -674,7 +781,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
             </p>
             {isPagesHost() && (
               <p className="muted" style={{ fontSize: 12 }}>
-                公开站可能演示/延迟；部分浏览器需用户手势后才可授权通知。
+                公开站可能演示/延时；部分浏览器需用户手势后才可授权通知。
               </p>
             )}
             <div className="form-row" style={{ alignItems: 'center' }}>
@@ -903,7 +1010,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.10.0 · 挂单/绩效/复盘模板/PWA
+              <strong>股票工作台</strong> v0.12.0 · 文案/行情加固/模拟实盘加深
             </p>
             <p className="muted">
               运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}

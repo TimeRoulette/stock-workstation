@@ -3,11 +3,15 @@ import { useQuotes } from '../hooks/useQuotes'
 import * as db from '../services/db'
 import {
   analyzeLivePortfolio,
+  compareLiveVsPaper,
   exportLiveAnalysisCsv,
   exportLiveAnalysisMarkdown,
+  liveSymbolPerformance,
   parseLiveTradesCsv,
+  reconcileLivePositions,
   type LiveAnalysisResult,
 } from '../services/liveAnalysis'
+import { computePaperPerf } from '../services/paperPerf'
 import { normalizeSymbol } from '../services/quotes'
 import { fmt, fmtPct, fmtSigned } from '../utils/format'
 import type { LiveTrade, ToastItem, TradeSide } from '../types'
@@ -34,6 +38,11 @@ export function LivePage({ refreshSec, onToast, onOpenJournal }: Props) {
   const [paste, setPaste] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<LiveAnalysisResult | null>(null)
+  const [corpSym, setCorpSym] = useState('')
+  const [corpDraft, setCorpDraft] = useState('')
+  const [compare, setCompare] = useState<ReturnType<typeof compareLiveVsPaper> | null>(null)
+  const [symPerf, setSymPerf] = useState<ReturnType<typeof liveSymbolPerformance>>([])
+  const [reconcile, setReconcile] = useState<ReturnType<typeof reconcileLivePositions>>([])
   const fileRef = useRef<HTMLInputElement>(null)
 
   // 手动单笔
@@ -76,7 +85,29 @@ export function LivePage({ refreshSec, onToast, onOpenJournal }: Props) {
       if (Number.isFinite(q.price)) priceMap[sym] = q.price
     }
     // 无行情时仍可按成本分析
-    setAnalysis(analyzeLivePortfolio(trades, priceMap))
+    const a = analyzeLivePortfolio(trades, priceMap)
+    setAnalysis(a)
+    setSymPerf(liveSymbolPerformance(trades))
+    setReconcile(reconcileLivePositions(trades, db.listLiveCorpNotes()))
+    try {
+      const paperTrades = db.listTrades({ limit: 5000 })
+      const snaps = db.listEquitySnapshots(500)
+      const paper = computePaperPerf(paperTrades, snaps)
+      const paperFloating = db.listPositions().reduce((s, p) => {
+        const px = priceMap[p.symbol] ?? p.avgCost
+        return s + (px - p.avgCost) * p.qty
+      }, 0)
+      setCompare(
+        compareLiveVsPaper({
+          liveFloating: a.floatingPnl,
+          liveRealized: a.realizedPnl,
+          paperEquityReturnPct: paper.equityReturnPct,
+          paperFloating,
+        }),
+      )
+    } catch {
+      setCompare(null)
+    }
   }, [trades, quotes])
 
   const doImportText = (text: string) => {
@@ -194,9 +225,8 @@ export function LivePage({ refreshSec, onToast, onOpenJournal }: Props) {
           <div className="panel-header">导入成交</div>
           <div className="panel-body">
             <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
-              表头示例：
-              <code>date,symbol,name,side,qty,price,fee</code>；side 支持 buy/sell 或
-              买/卖。费用可选。与「模拟」页成交完全隔离。
+              表头更宽容：日期/代码/买卖/价格/数量等中英别名均可；side 支持 buy/sell、买/卖、证券买入等。
+              无法识别的行会跳过。费用与备注可选。与「模拟」页成交完全隔离。
             </p>
             <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
               <button type="button" className="btn primary touch-target" onClick={() => fileRef.current?.click()}>
@@ -368,7 +398,7 @@ export function LivePage({ refreshSec, onToast, onOpenJournal }: Props) {
                     </div>
                   </div>
                   <div className="stat-card">
-                    <div className="stat-label">最大回撤（示意）</div>
+                    <div className="stat-label">最大回撤（估算）</div>
                     <div className="stat-value mono">
                       {a.maxDrawdownPct != null ? `${a.maxDrawdownPct.toFixed(2)}%` : '—'}
                     </div>
@@ -379,6 +409,133 @@ export function LivePage({ refreshSec, onToast, onOpenJournal }: Props) {
                 </p>
               </div>
             </div>
+
+            {compare && (a.tradeCount > 0 || true) && (
+              <div className="panel" style={{ marginBottom: 16 }}>
+                <div className="panel-header">实盘 vs 模拟（并排小卡）</div>
+                <div className="panel-body">
+                  <div className="stat-grid live-stat-grid">
+                    <div className="stat-card">
+                      <div className="stat-label">实盘浮动+已实现</div>
+                      <div className={`stat-value mono ${compare.liveTotal >= 0 ? 'up' : 'down'}`}>
+                        {fmtSigned(compare.liveTotal, 2)}
+                      </div>
+                    </div>
+                    <div className="stat-card">
+                      <div className="stat-label">模拟侧参考</div>
+                      <div className="stat-value" style={{ fontSize: 14 }}>{compare.paperHint}</div>
+                    </div>
+                  </div>
+                  <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>{compare.deltaHint}</p>
+                </div>
+              </div>
+            )}
+
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <div className="panel-header">持仓对账 · 分红/送股备注</div>
+              <div className="panel-body">
+                <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                  数量由成交 FIFO 推算；分红/送股请手动备注（不自动调数量）。可一键去复盘/自选联动。
+                </p>
+                <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <input
+                    className="input compact"
+                    style={{ maxWidth: 140 }}
+                    placeholder="代码"
+                    value={corpSym}
+                    onChange={(e) => {
+                      setCorpSym(e.target.value)
+                      const n = normalizeSymbol(e.target.value).symbol
+                      if (n) setCorpDraft(db.getLiveCorpNote(n))
+                    }}
+                  />
+                  <input
+                    className="input"
+                    style={{ maxWidth: 280 }}
+                    placeholder="如：2026-03 10送2 / 每股分红0.5"
+                    value={corpDraft}
+                    onChange={(e) => setCorpDraft(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-xs primary"
+                    onClick={() => {
+                      const n = normalizeSymbol(corpSym).symbol
+                      if (!n) return
+                      db.setLiveCorpNote(n, corpDraft)
+                      setReconcile(reconcileLivePositions(trades, db.listLiveCorpNotes()))
+                      onToast?.({ message: '已保存分红/送股备注', type: 'success' })
+                    }}
+                  >
+                    保存备注
+                  </button>
+                </div>
+                {reconcile.length === 0 ? (
+                  <div className="empty-state compact">暂无持仓可对账</div>
+                ) : (
+                  <table className="data dense">
+                    <thead>
+                      <tr>
+                        <th>代码</th>
+                        <th>推算数量</th>
+                        <th>成本</th>
+                        <th>备注</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reconcile.map((r) => (
+                        <tr key={r.symbol}>
+                          <td className="mono">{r.symbol}</td>
+                          <td className="mono">{fmt(r.qtyFromTrades, 0)}</td>
+                          <td className="mono">{fmt(r.avgCost, 3)}</td>
+                          <td className="muted" style={{ fontSize: 12 }}>{r.corpNote || r.hint}</td>
+                          <td>
+                            {onOpenJournal && (
+                              <button type="button" className="btn btn-xs" onClick={() => onOpenJournal(r.symbol)}>
+                                复盘
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            {symPerf.length > 0 && (
+              <div className="panel" style={{ marginBottom: 16 }}>
+                <div className="panel-header">按标的已实现绩效</div>
+                <div className="panel-body table-scroll">
+                  <table className="data dense">
+                    <thead>
+                      <tr>
+                        <th>代码</th>
+                        <th>名称</th>
+                        <th>已实现</th>
+                        <th>回合</th>
+                        <th>胜率</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {symPerf.map((s) => (
+                        <tr key={s.symbol}>
+                          <td className="mono">{s.symbol}</td>
+                          <td>{s.name}</td>
+                          <td className={`mono ${s.realizedPnl >= 0 ? 'up' : 'down'}`}>
+                            {fmtSigned(s.realizedPnl, 2)}
+                          </td>
+                          <td className="mono">{s.rounds}</td>
+                          <td className="mono">{s.winRate == null ? '—' : `${s.winRate.toFixed(0)}%`}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             <div className="panel" style={{ marginBottom: 16 }}>
               <div className="panel-header">持仓与集中度</div>

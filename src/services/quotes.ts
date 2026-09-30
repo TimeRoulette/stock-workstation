@@ -10,6 +10,13 @@ import type {
 } from '../types'
 import * as db from './db'
 import { getBriefHealth, probeBriefSources } from './briefNews'
+import {
+  quoteCandidateUrls,
+  preferElectronTransport,
+  electronHttpGet,
+  setQuoteProxyUrl,
+  getQuoteProxyUrl,
+} from './quoteTransport'
 
 import {
   normalizeSymbol,
@@ -238,17 +245,26 @@ async function fetchWithRetry(
   const timeoutMs = opts.timeoutMs ?? PROVIDER_TIMEOUT_MS
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
     try {
-      const res = await fetch(url, { ...init, signal: ctrl.signal })
-      clearTimeout(timer)
+      let res: Response
+      // Electron：绝对 URL 优先主进程代理（无 CORS）
+      if (preferElectronTransport() && /^https?:\/\//i.test(url)) {
+        res = await electronHttpGet(url, { headers: init.headers, timeoutMs })
+      } else {
+        const ctrl = new AbortController()
+        const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+        try {
+          res = await fetch(url, { ...init, signal: ctrl.signal })
+        } finally {
+          clearTimeout(timer)
+        }
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       return res
     } catch (e) {
-      clearTimeout(timer)
       lastErr = e
       if (attempt < retries) {
+        // 失败退避：200ms、400ms…
         await new Promise((r) => setTimeout(r, 200 * (attempt + 1)))
       }
     }
@@ -262,26 +278,6 @@ async function fetchWithRetry(
 
 /* ---------- Static hosting / CORS (GitHub Pages has no Vite proxy) ---------- */
 
-function isElectronRuntime(): boolean {
-  return Boolean(typeof window !== 'undefined' && (window as Window & { stockWorkstation?: { isElectron?: boolean } }).stockWorkstation?.isElectron)
-}
-
-/**
- * Build candidate URLs for a quote API call.
- * - DEV: Vite `/api/*` proxies (reliable).
- * - Electron: direct HTTPS (no browser CORS).
- * - Static Pages / plain browser: try direct, then a public CORS relay (best-effort;
- *   providers still fall through to SQLite cache → mock).
- */
-function quoteCandidateUrls(devProxyUrl: string, absoluteUrl: string): string[] {
-  if (import.meta.env.DEV) return [devProxyUrl]
-  if (isElectronRuntime()) return [absoluteUrl]
-  return [
-    absoluteUrl,
-    // Public CORS relay — rate-limited / may change; not a hard dependency
-    `https://corsproxy.io/?${encodeURIComponent(absoluteUrl)}`,
-  ]
-}
 
 async function fetchFirstOk(
   urls: string[],
@@ -318,7 +314,7 @@ const healthMap: Record<string, HealthInternal> = {
   sina: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
   ths: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
   yahoo: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '尚未探测', lastFailAt: null },
-  mock: { status: 'ok', latencyMs: 0, lastOkAt: new Date().toISOString(), lastError: null, message: '本地始终可用', lastFailAt: null },
+  mock: { status: 'ok', latencyMs: 0, lastOkAt: new Date().toISOString(), lastError: null, message: '本地演示始终可用（非真行情）', lastFailAt: null },
   cache: { status: 'unknown', latencyMs: null, lastOkAt: null, lastError: null, message: '取决于是否有缓存', lastFailAt: null },
 }
 
@@ -360,8 +356,8 @@ export function getProviderHealth(): ProviderHealth[] {
     sina: '新浪财经',
     ths: '同花顺',
     yahoo: 'Yahoo Finance',
-    mock: '本地模拟',
-    cache: 'SQLite 缓存',
+    mock: '本地演示',
+    cache: '本地旧行情',
   }
   const quoteHealth = Object.keys(labels).map((id) => {
     const h = healthMap[id]
@@ -442,6 +438,7 @@ async function fetchOneYahooQuoteOnce(symbol: string): Promise<Quote> {
     currency: meta.currency || currencyFor(norm),
     asOf: new Date((meta.regularMarketTime || Date.now() / 1000) * 1000).toISOString(),
     delayed: true,
+    delayHint: '约 15 分钟（Yahoo 公开延迟）',
     source: 'yahoo',
   }
 }
@@ -715,8 +712,8 @@ function quoteFromCache(symbol: string): Quote | null {
     healthMap.cache.lastOkAt = meta?.updatedAt || new Date().toISOString()
     healthMap.cache.lastError = null
     healthMap.cache.message = fresh
-      ? `新鲜缓存${ageMin != null ? ` · ${ageMin} 分钟前` : ''}`
-      : `过期缓存（放宽 TTL）${ageMin != null ? ` · ${ageMin} 分钟前` : ''}`
+      ? `刚才记下${ageMin != null ? ` · ${ageMin} 分钟前` : ''}`
+      : `过期旧行情（放宽 TTL）${ageMin != null ? ` · ${ageMin} 分钟前` : ''}`
     return { ...any, delayed: true, source: 'cache' as QuoteSource }
   } catch {
     return null
@@ -806,6 +803,7 @@ async function fetchSinaQuotesOnce(symbols: string[]): Promise<Quote[]> {
         currency: currencyFor(norm),
         asOf: Number.isNaN(Date.parse(asOf)) ? new Date().toISOString() : asOf,
         delayed: true,
+        delayHint: '公开接口，通常数秒～数分钟',
         source: 'sina',
       })
     }
@@ -1017,6 +1015,7 @@ export class QuoteService {
   }
 
   async fetchQuotes(symbols: string[]): Promise<Quote[]> {
+    syncQuoteProxyFromDb()
     if (symbols.length === 0) return []
     const norms = symbols.map((s) => normalizeSymbol(s).symbol)
     const unique = [...new Set(norms)]
@@ -1081,7 +1080,9 @@ export class QuoteService {
 
     const list = unique.map((s) => result.get(s)!)
     persistQuotes(list)
-    return list
+    // 异步交叉校验不阻塞报价返回；结果写入内存映射供下一轮合并
+    void crossCheckQuotesWithCandles(list)
+    return list.map((q) => applySuspiciousMemory(q))
   }
 
   async fetchCandles(symbol: string, days = 90, period: ChartPeriod = '1d'): Promise<Candle[]> {
@@ -1166,37 +1167,95 @@ export class QuoteService {
       healthMap.cache.lastOkAt = meta.updatedAt
       healthMap.cache.lastError = null
       healthMap.cache.message = fresh
-        ? `新鲜缓存 · ${ageMin} 分钟前`
+        ? `刚才记下的行情 · ${ageMin} 分钟前`
         : `可放宽使用 · ${ageMin} 分钟前`
     } else {
       healthMap.cache.status = 'unknown'
-      healthMap.cache.message = '暂无缓存（成功拉行情后写入）'
+      healthMap.cache.message = '暂无旧行情（成功拉行情后写入）'
       healthMap.cache.lastOkAt = null
     }
     healthMap.mock.status = 'ok'
     healthMap.mock.latencyMs = 0
     healthMap.mock.lastOkAt = new Date().toISOString()
     healthMap.mock.lastFailAt = null
-    healthMap.mock.message = '本地始终可用'
+    healthMap.mock.message = '本地演示始终可用（非真行情）'
     const live = ['eastmoney', 'sina', 'ths', 'yahoo']
     const allDown = live.every((id) => healthMap[id]?.status === 'down')
     if (allDown) {
-      healthMap.cache.message += ' · 真源均不可用，将优先缓存/模拟'
+      healthMap.cache.message += ' · 真源均不可用，将优先旧行情/演示'
     }
     return getProviderHealth()
   }
 
   async activeSourceLabel(): Promise<string> {
     const labels: Record<string, string> = {
-      auto: '自动（东财 → 新浪 → 同花顺 → Yahoo → 缓存 → 模拟）',
+      auto: '自动（东财 → 新浪 → 同花顺 → Yahoo → 旧行情 → 演示）',
       eastmoney: '东方财富优先',
       ths: '同花顺优先',
       yahoo: 'Yahoo 优先',
-      mock: '本地模拟',
+      mock: '本地演示',
     }
     return labels[this.mode] || this.mode
   }
 }
+
+
+/** 报价与最近日 K 收盘交叉校验：偏差过大标「可疑」 */
+const suspiciousMemory = new Map<string, { suspicious: boolean; reason?: string }>()
+const crossCheckAt = new Map<string, number>()
+
+function applySuspiciousMemory(q: Quote): Quote {
+  const m = suspiciousMemory.get(q.symbol)
+  if (!m) return q
+  return { ...q, suspicious: m.suspicious, suspiciousReason: m.reason }
+}
+
+async function crossCheckQuotesWithCandles(quotes: Quote[]) {
+  let budget = 5
+  for (const q of quotes) {
+    if (budget <= 0) break
+    if (q.source === 'mock' || q.source === 'cache') continue
+    const last = crossCheckAt.get(q.symbol) || 0
+    if (Date.now() - last < 5 * 60_000) continue
+    budget -= 1
+    crossCheckAt.set(q.symbol, Date.now())
+    try {
+      const { candles, source } = await quoteService.fetchCandlesWithMeta(q.symbol, 10, '1d')
+      if (source === 'mock' || candles.length === 0) continue
+      const lastClose = candles[candles.length - 1]?.close
+      if (!Number.isFinite(lastClose) || !lastClose) continue
+      const diff = Math.abs(q.price - lastClose!) / lastClose!
+      if (diff > 0.12) {
+        suspiciousMemory.set(q.symbol, {
+          suspicious: true,
+          reason: `报价 ${q.price} 与近日 K 收盘 ${lastClose} 相差 ${(diff * 100).toFixed(1)}%，请核对`,
+        })
+      } else {
+        suspiciousMemory.set(q.symbol, { suspicious: false })
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/** 从设置同步自备代理（设置页保存后调用） */
+export function syncQuoteProxyFromDb() {
+  try {
+    const url = typeof localStorage !== 'undefined' ? localStorage.getItem('sw-quote-proxy-url') || '' : ''
+    let fromDb = ''
+    try {
+      fromDb = db.getSetting('quoteProxyUrl') || ''
+    } catch {
+      /* */
+    }
+    setQuoteProxyUrl(fromDb || url)
+  } catch {
+    setQuoteProxyUrl('')
+  }
+}
+
+export { setQuoteProxyUrl, getQuoteProxyUrl }
 
 export const quoteService = new QuoteService()
 

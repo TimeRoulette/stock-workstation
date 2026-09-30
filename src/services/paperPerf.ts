@@ -1,5 +1,5 @@
 /**
- * 模拟简易绩效：胜率 / 最大回撤 / 相对基准示意
+ * 模拟简易绩效：胜率 / 最大回撤 / 相对基准 / 按标的贡献 / 持仓天数 / 月度盈亏
  * 仅供研究，非真实券商绩效。
  */
 import type { EquitySnapshot, Trade } from '../types'
@@ -12,6 +12,23 @@ export interface ClosedRound {
   sellProceeds: number
   pnl: number
   win: boolean
+  /** 买入到卖出大约天数（FIFO 末笔近似） */
+  holdDays: number | null
+  closedAt: string | null
+}
+
+export interface SymbolContribution {
+  symbol: string
+  name: string
+  realizedPnl: number
+  rounds: number
+  wins: number
+  avgHoldDays: number | null
+}
+
+export interface MonthlyPnl {
+  month: string
+  pnl: number
 }
 
 export interface PaperPerfResult {
@@ -27,11 +44,16 @@ export interface PaperPerfResult {
   relativePct: number | null
   benchmarkStatus: 'ok' | 'unavailable' | 'sample'
   note: string
+  bySymbol: SymbolContribution[]
+  monthly: MonthlyPnl[]
+  /** 资金曲线标注：峰值 / 谷值 */
+  equityPeak: { ts: string; equity: number } | null
+  equityTrough: { ts: string; equity: number } | null
 }
 
 /** FIFO 配对已平仓回合（卖出对应买入） */
 export function computeClosedRounds(trades: Trade[]): ClosedRound[] {
-  type Lot = { qty: number; price: number; name: string }
+  type Lot = { qty: number; price: number; name: string; ts: string }
   const books = new Map<string, Lot[]>()
   const closed: ClosedRound[] = []
 
@@ -45,7 +67,7 @@ export function computeClosedRounds(trades: Trade[]): ClosedRound[] {
   for (const t of sorted) {
     const lots = books.get(t.symbol) || []
     if (t.side === 'buy') {
-      lots.push({ qty: t.qty, price: t.price, name: t.name })
+      lots.push({ qty: t.qty, price: t.price, name: t.name, ts: t.ts })
       books.set(t.symbol, lots)
       continue
     }
@@ -53,12 +75,14 @@ export function computeClosedRounds(trades: Trade[]): ClosedRound[] {
     let buyCost = 0
     let matched = 0
     let name = t.name
+    let earliestBuy: string | null = null
     while (remain > 1e-9 && lots.length) {
       const lot = lots[0]
       const take = Math.min(lot.qty, remain)
       buyCost += take * lot.price
       matched += take
       name = lot.name || name
+      if (!earliestBuy) earliestBuy = lot.ts
       lot.qty -= take
       remain -= take
       if (lot.qty <= 1e-9) lots.shift()
@@ -67,6 +91,11 @@ export function computeClosedRounds(trades: Trade[]): ClosedRound[] {
     if (matched <= 1e-9) continue
     const sellProceeds = matched * t.price
     const pnl = sellProceeds - buyCost
+    let holdDays: number | null = null
+    if (earliestBuy) {
+      const ms = new Date(t.ts).getTime() - new Date(earliestBuy).getTime()
+      if (Number.isFinite(ms) && ms >= 0) holdDays = Math.max(0, Math.round(ms / 86400000))
+    }
     closed.push({
       symbol: t.symbol,
       name,
@@ -75,6 +104,8 @@ export function computeClosedRounds(trades: Trade[]): ClosedRound[] {
       sellProceeds,
       pnl,
       win: pnl > 0,
+      holdDays,
+      closedAt: t.ts,
     })
   }
   return closed
@@ -107,10 +138,71 @@ export function equityPeriodReturnPct(snapshots: EquitySnapshot[]): number | nul
   return ((last - first) / first) * 100
 }
 
+export function equityAnnotations(snapshots: EquitySnapshot[]): {
+  peak: { ts: string; equity: number } | null
+  trough: { ts: string; equity: number } | null
+} {
+  if (!snapshots.length) return { peak: null, trough: null }
+  let peak = snapshots[0]
+  let trough = snapshots[0]
+  for (const s of snapshots) {
+    if (s.equity > peak.equity) peak = s
+    if (s.equity < trough.equity) trough = s
+  }
+  return {
+    peak: { ts: peak.ts, equity: peak.equity },
+    trough: { ts: trough.ts, equity: trough.equity },
+  }
+}
+
+export function symbolContributions(rounds: ClosedRound[]): SymbolContribution[] {
+  const map = new Map<string, SymbolContribution & { holdSum: number; holdN: number }>()
+  for (const r of rounds) {
+    const cur = map.get(r.symbol) || {
+      symbol: r.symbol,
+      name: r.name,
+      realizedPnl: 0,
+      rounds: 0,
+      wins: 0,
+      avgHoldDays: null,
+      holdSum: 0,
+      holdN: 0,
+    }
+    cur.realizedPnl += r.pnl
+    cur.rounds += 1
+    if (r.win) cur.wins += 1
+    if (r.holdDays != null) {
+      cur.holdSum += r.holdDays
+      cur.holdN += 1
+    }
+    cur.name = r.name || cur.name
+    map.set(r.symbol, cur)
+  }
+  return [...map.values()]
+    .map(({ holdSum, holdN, ...rest }) => ({
+      ...rest,
+      avgHoldDays: holdN ? holdSum / holdN : null,
+    }))
+    .sort((a, b) => b.realizedPnl - a.realizedPnl)
+}
+
+export function monthlyPnl(rounds: ClosedRound[]): MonthlyPnl[] {
+  const map = new Map<string, number>()
+  for (const r of rounds) {
+    if (!r.closedAt) continue
+    const m = r.closedAt.slice(0, 7)
+    if (!/^\d{4}-\d{2}$/.test(m)) continue
+    map.set(m, (map.get(m) || 0) + r.pnl)
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([month, pnl]) => ({ month, pnl }))
+}
+
 export const BENCHMARKS = [
-  { id: '000300.SH', label: '沪深300（示意）' },
-  { id: '000001.SH', label: '上证指数（示意）' },
-  { id: '399006.SZ', label: '创业板指（示意）' },
+  { id: '000300.SH', label: '沪深300（参考）' },
+  { id: '000001.SH', label: '上证指数（参考）' },
+  { id: '399006.SZ', label: '创业板指（参考）' },
 ] as const
 
 export type BenchmarkId = (typeof BENCHMARKS)[number]['id']
@@ -134,6 +226,7 @@ export function computePaperPerf(
   const winRate = rounds.length ? (wins / rounds.length) * 100 : null
   const mdd = maxDrawdownPct(snapshots)
   const eqRet = equityPeriodReturnPct(snapshots)
+  const ann = equityAnnotations(snapshots)
 
   const closes = (opts?.benchmarkCloses || []).filter((v) => Number.isFinite(v) && v > 0)
   let benchRet: number | null = null
@@ -156,10 +249,14 @@ export function computePaperPerf(
     maxDrawdownPct: mdd,
     equityReturnPct: eqRet,
     benchmarkId: opts?.benchmarkId || '000300.SH',
-    benchmarkLabel: opts?.benchmarkLabel || '沪深300（示意）',
+    benchmarkLabel: opts?.benchmarkLabel || '沪深300（参考）',
     benchmarkReturnPct: benchRet,
     relativePct: relative,
     benchmarkStatus: status,
-    note: '仅供研究，非真实券商绩效；撮合与基准均为演示规则。',
+    note: '仅供研究，非真实券商绩效；撮合与基准均为演示规则。非投资建议。',
+    bySymbol: symbolContributions(rounds),
+    monthly: monthlyPnl(rounds),
+    equityPeak: ann.peak,
+    equityTrough: ann.trough,
   }
 }

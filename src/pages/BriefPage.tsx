@@ -16,6 +16,7 @@ import type {
   BriefSummaryBlock,
   Quote,
 } from '../types'
+import { briefStatusBadge } from '../utils/dataStatusLabels'
 
 const CAT: Record<BriefItem['category'], string> = {
   news: '资讯',
@@ -35,11 +36,9 @@ const SECTION_ORDER: Array<{ key: BriefSection; title: string }> = [
 ]
 
 function statusLabel(s?: BriefDataStatus): string {
-  if (s === 'live') return '实时'
-  if (s === 'cached') return '缓存'
+  if (!s) return ''
   if (s === 'degraded') return '降级'
-  if (s === 'sample') return '示意'
-  return ''
+  return briefStatusBadge(s)
 }
 
 function statusClass(s?: BriefDataStatus): string {
@@ -195,8 +194,8 @@ export function BriefPage({ onOpenSymbol }: Props) {
         ).slice(0, 4)
         const notes: string[] = []
         if (!q) notes.push('行情不可用')
-        else if (q.source === 'mock') notes.push('示意行情')
-        else if (q.source === 'cache') notes.push('缓存行情')
+        else if (q.source === 'mock') notes.push('演示行情')
+        else if (q.source === 'cache') notes.push('旧行情')
         if (rvolMap[w.symbol] == null) notes.push('RVOL不可用')
         if (!hits.length) notes.push('无新闻命中')
         return {
@@ -255,9 +254,9 @@ export function BriefPage({ onOpenSymbol }: Props) {
             早盘新闻分析 · 源：{sourceId || '…'}
             {watchCount > 0 ? ` · 自选 ${watchCount}` : ''}
             {holdingCount > 0 ? ` · 持仓 ${holdingCount}` : ''}
-            {liveN ? ` · 实时 ${liveN}` : ''}
-            {cacheN ? ` · 缓存 ${cacheN}` : ''}
-            {sampleN ? ` · 示意 ${sampleN}` : ''}
+            {liveN ? ` · 最新 ${liveN}` : ''}
+            {cacheN ? ` · 旧行情 ${cacheN}` : ''}
+            {sampleN ? ` · 演示 ${sampleN}` : ''}
           </p>
         </div>
         <div className="toolbar">
@@ -269,7 +268,7 @@ export function BriefPage({ onOpenSymbol }: Props) {
       <div className="page-body">
         <CollapsibleTip summary="日报说明 · 外链复用（点击展开）">
           公开源：人民日报财经、央视财经、华尔街见闻、BBC Business、美联储新闻稿、东财板块榜（均无密钥）。
-          每条标注「实时/缓存/示意」；自选匹配若仅标题关键词会标明。「汇总分析」为基于已抓取新闻的规则短文，非 AI
+          每条标注「最新/旧行情/演示」；自选匹配若仅标题关键词会标明。「汇总分析」为基于已抓取新闻的规则短文，非 AI
           荐股。仅供研究，不构成投资建议。
           <br />
           <span className="muted">{EXTERNAL_LINK_HINT}。</span>
@@ -368,7 +367,7 @@ export function BriefPage({ onOpenSymbol }: Props) {
         ) : items.length === 0 ? (
           <div className="empty-state panel">
             <h3>暂无日报</h3>
-            <p>公开资讯源暂不可用，请稍后刷新。不会伪造实时新闻。</p>
+            <p>公开资讯源暂不可用，请稍后刷新。不会伪造最新新闻。</p>
           </div>
         ) : (
           <div className="brief-sections">

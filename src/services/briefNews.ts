@@ -737,10 +737,10 @@ function buildMetaItems(
   const day = todayStr()
   const items: BriefItem[] = []
   const statusNote = usedCache
-    ? '部分或全部来自本地缓存（约 8 分钟内）'
+    ? '部分或全部来自刚才存下的条目（约 8 分钟内）'
     : liveCount > 0
-      ? `已聚合 ${liveCount} 条公开源实时条目`
-      : '公开源暂不可用，下列为示意骨架'
+      ? `已聚合 ${liveCount} 条公开源最新条目`
+      : '公开源暂不可用，下列为演示骨架'
 
   items.push({
     id: 'meta-premarket',
@@ -800,18 +800,18 @@ function sampleFallbackNews(): RawNews[] {
   return [
     {
       id: 'sample-1',
-      title: '（示意）隔夜美股科技股分化，关注利率预期',
-      summary: '此为示意条目，非实时新闻。公开源不可用时占位；请稍后刷新。',
-      source: '示意 · 非实时',
+      title: '（演示）隔夜美股科技股分化，关注利率预期',
+      summary: '此为演示条目，非最新新闻。公开源不可用时占位；请稍后刷新。',
+      source: '演示 · 非最新',
       publishedAt: day,
       topics: ['美股', '央行/利率'],
       dataStatus: 'sample',
     },
     {
       id: 'sample-2',
-      title: '（示意）国内财经日历：关注政策与流动性表述',
-      summary: '示意占位。接入人民日报/央视/见闻等源后将替换为真实标题与链接。',
-      source: '示意 · 非实时',
+      title: '（演示）国内财经日历：关注政策与流动性表述',
+      summary: '演示占位。接入人民日报/央视/见闻等源后将替换为真实标题与链接。',
+      source: '演示 · 非最新',
       publishedAt: day,
       topics: ['A股'],
       dataStatus: 'sample',
@@ -872,7 +872,7 @@ export function buildSummaryAnalysis(
       const toneLabel = tone === 'bullish' ? '偏积极' : tone === 'bearish' ? '偏谨慎' : '中性偏分化'
       const sample = overnight
         .slice(0, 2)
-        .map((i) => i.title.replace(/^（示意）/, '').slice(0, 28))
+        .map((i) => i.title.replace(/^（演示）/, '').slice(0, 28))
         .join('；')
       blocks.push({
         title: '隔夜基调',
@@ -1063,7 +1063,7 @@ export async function aggregateBrief(
     id: 'disclaimer',
     title: '声明：仅供研究，不构成投资建议',
     summary:
-      '情绪标签与关联均为标题关键词规则，非 AI 精确预测，亦非荐股。公开源常有延迟；状态见各条「实时/缓存/示意」。',
+      '情绪标签与关联均为标题关键词规则，非 AI 精确预测，亦非荐股。公开源常有延迟；状态见各条「最新/旧行情/演示」。',
     source: '工作台',
     category: 'tip',
     publishedAt: todayStr(),

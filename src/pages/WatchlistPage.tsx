@@ -32,6 +32,7 @@ import type {
   ToastItem,
   WatchlistItem,
 } from '../types'
+import { sourceCornerBadge } from '../utils/dataStatusLabels'
 
 const PERIODS: Array<{ key: ChartPeriod; label: string }> = [
   { key: '1d', label: '日' },
@@ -420,7 +421,7 @@ export function WatchlistPage({
       </header>
       <div className="page-body">
         <CollapsibleTip summary="盯盘说明（点击展开）">
-          自选行内迷你走势为近 5–20 日真实收盘序列；点不足或示意行情会弱化显示。提醒支持模板与稍后；免打扰见设置。
+          自选行内迷你走势为近 5–20 日真实收盘序列；点不足或演示行情会弱化显示。提醒支持模板与稍后；免打扰见设置。
         </CollapsibleTip>
         {/* 一键添加 — 置顶少点击 */}
         <div className="quick-bar panel" data-coach="watchlist">
@@ -456,7 +457,7 @@ export function WatchlistPage({
         </div>
 
         {quoteError && (
-          <div className="state-banner error">行情异常：{quoteError}（将尽量使用缓存/模拟）</div>
+          <div className="state-banner error">行情异常：{quoteError}（将尽量使用旧行情/演示）</div>
         )}
 
         {items.length === 0 ? (
@@ -554,13 +555,18 @@ export function WatchlistPage({
                                 <div className="muted" style={{ fontSize: 11 }}>
                                   {q?.name || item.name}
                                   {q?.source === 'mock' && (
-                                    <span className="mock-corner" title="示意行情，非真实成交价">
-                                      {' '}示意
+                                    <span className="mock-corner" title={sourceCornerBadge('mock')?.title || '演示数据'}>
+                                      {' '}演示
                                     </span>
                                   )}
                                   {q?.source === 'cache' && (
-                                    <span className="cache-corner" title="本地缓存行情">
-                                      {' '}缓存
+                                    <span className="cache-corner" title={sourceCornerBadge('cache')?.title || '刚才存下的行情'}>
+                                      {' '}旧行情
+                                    </span>
+                                  )}
+                                  {q?.suspicious && (
+                                    <span className="mock-corner" title={q.suspiciousReason || '报价与 K 线偏差较大'}>
+                                      {' '}可疑
                                     </span>
                                   )}
                                 </div>
@@ -581,7 +587,7 @@ export function WatchlistPage({
                                 <Sparkline
                                   values={sp.values}
                                   sample={sp.sample || q?.source === 'mock'}
-                                  title={sp.sample ? '走势点不足/示意' : '近20日收盘'}
+                                  title={sp.sample ? '走势点不足/演示' : '近20日收盘'}
                                 />
                               )
                             })()}

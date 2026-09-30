@@ -1,7 +1,7 @@
 {
   "name": "stock-workstation",
   "productName": "股票工作台",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "跨平台个人股票工作台 — 盯盘/指标/提醒、模拟与实盘分析、日报、复盘（东财/新浪/同花顺/Yahoo/模拟）",
   "private": true,
   "type": "module",

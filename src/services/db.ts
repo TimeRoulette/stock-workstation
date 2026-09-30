@@ -171,6 +171,7 @@ function migrate() {
   migrateWatchlistTag()
   migrateAlertSnooze()
   migratePendingOrders()
+  migratePendingFilledQty()
   migratePositionNoteAlerts()
   migrateJournalTemplate()
   migrateLiveTrades()
@@ -228,6 +229,23 @@ function migratePendingOrders() {
     console.warn('migratePendingOrders', e)
   }
 }
+
+
+/** v0.12: 挂单部分成交数量 */
+function migratePendingFilledQty() {
+  if (!db) return
+  try {
+    const info = db.exec('PRAGMA table_info(pending_orders)')
+    const cols = new Set((info[0]?.values || []).map((r: SqlValue[]) => String(r[1])))
+    if (!cols.has('filled_qty')) {
+      db.run('ALTER TABLE pending_orders ADD COLUMN filled_qty REAL NOT NULL DEFAULT 0')
+      scheduleSave()
+    }
+  } catch (e) {
+    console.warn('migratePendingFilledQty', e)
+  }
+}
+
 
 /** v0.10: 止损触及提醒 / 演示自动平仓 */
 function migratePositionNoteAlerts() {
@@ -331,6 +349,11 @@ function seedIfEmpty() {
   if (getSetting('electronOpenAtLogin') == null) setSetting('electronOpenAtLogin', '0')
   if (getSetting('electronMinimizeToTray') == null) setSetting('electronMinimizeToTray', '0')
   if (getSetting('llmSummaryEnabled') == null) setSetting('llmSummaryEnabled', '0')
+  if (getSetting('quoteProxyUrl') == null) setSetting('quoteProxyUrl', '')
+  if (getSetting('paperFeeRate') == null) setSetting('paperFeeRate', '0.0003')
+  if (getSetting('paperStampTaxRate') == null) setSetting('paperStampTaxRate', '0.0005')
+  if (getSetting('riskMaxPositionPct') == null) setSetting('riskMaxPositionPct', '0.35')
+  if (getSetting('riskDailyLossPct') == null) setSetting('riskDailyLossPct', '0.03')
 
   const snapCount = queryOne<{ c: number }>(
     'SELECT COUNT(*) FROM equity_snapshots',
@@ -392,6 +415,11 @@ export function getSettings(): AppSettings {
     electronOpenAtLogin: getSetting('electronOpenAtLogin') === '1',
     electronMinimizeToTray: getSetting('electronMinimizeToTray') === '1',
     llmSummaryEnabled: getSetting('llmSummaryEnabled') === '1',
+    quoteProxyUrl: getSetting('quoteProxyUrl') || '',
+    paperFeeRate: Number(getSetting('paperFeeRate') ?? 0.0003),
+    paperStampTaxRate: Number(getSetting('paperStampTaxRate') ?? 0.0005),
+    riskMaxPositionPct: Number(getSetting('riskMaxPositionPct') ?? 0.35),
+    riskDailyLossPct: Number(getSetting('riskDailyLossPct') ?? 0.03),
   }
 }
 
@@ -550,8 +578,12 @@ export function placeTrade(input: {
   if (!Number.isFinite(input.qty) || !Number.isFinite(input.price) || input.qty <= 0 || input.price <= 0) {
     throw new Error('数量和价格必须大于 0')
   }
-  const feeRate = 0.0003
-  const fee = Math.max(0.01, input.qty * input.price * feeRate)
+  const feeRate = Math.max(0, Number(getSetting('paperFeeRate') ?? 0.0003) || 0)
+  const stampRate = Math.max(0, Number(getSetting('paperStampTaxRate') ?? 0.0005) || 0)
+  const notional = input.qty * input.price
+  const commission = feeRate > 0 ? Math.max(0.01, notional * feeRate) : 0
+  const stamp = input.side === 'sell' && stampRate > 0 ? notional * stampRate : 0
+  const fee = +(commission + stamp).toFixed(4)
   const account = getAccount()
   const symbol = input.symbol.toUpperCase()
 
@@ -1331,6 +1363,11 @@ export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void
   if (s.electronOpenAtLogin != null) setSetting('electronOpenAtLogin', s.electronOpenAtLogin ? '1' : '0')
   if (s.electronMinimizeToTray != null) setSetting('electronMinimizeToTray', s.electronMinimizeToTray ? '1' : '0')
   if (s.llmSummaryEnabled != null) setSetting('llmSummaryEnabled', s.llmSummaryEnabled ? '1' : '0')
+  if (s.quoteProxyUrl != null) setSetting('quoteProxyUrl', String(s.quoteProxyUrl))
+  if (s.paperFeeRate != null) setSetting('paperFeeRate', String(s.paperFeeRate))
+  if (s.paperStampTaxRate != null) setSetting('paperStampTaxRate', String(s.paperStampTaxRate))
+  if (s.riskMaxPositionPct != null) setSetting('riskMaxPositionPct', String(s.riskMaxPositionPct))
+  if (s.riskDailyLossPct != null) setSetting('riskDailyLossPct', String(s.riskDailyLossPct))
 }
 
 
@@ -1349,11 +1386,12 @@ function mapPending(r: SqlValue[]): PendingOrder {
     updatedAt: String(r[8]),
     filledTradeId: r[9] == null ? null : Number(r[9]),
     note: String(r[10] || ''),
+    filledQty: Number(r[11] || 0),
   }
 }
 
 const PENDING_SELECT =
-  `SELECT id, symbol, name, side, qty, limit_price, status, created_at, updated_at, filled_trade_id, note
+  `SELECT id, symbol, name, side, qty, limit_price, status, created_at, updated_at, filled_trade_id, note, COALESCE(filled_qty, 0)
    FROM pending_orders`
 
 export function listPendingOrders(status: PendingOrderStatus | 'all' = 'pending'): PendingOrder[] {
@@ -1389,45 +1427,110 @@ export function placePendingOrder(input: {
 export function cancelPendingOrder(id: number) {
   const o = queryOne(PENDING_SELECT + ' WHERE id = ?', [id], mapPending)
   if (!o) throw new Error('挂单不存在')
-  if (o.status !== 'pending') throw new Error('仅待成交挂单可取消')
+  if (o.status !== 'pending' && o.status !== 'partial') throw new Error('仅待成交/部分成交挂单可取消')
   run(`UPDATE pending_orders SET status = 'cancelled', updated_at = ? WHERE id = ?`, [
     new Date().toISOString(),
     id,
   ])
 }
 
+
+export function amendPendingOrder(
+  id: number,
+  patch: { qty?: number; limitPrice?: number },
+): PendingOrder {
+  const o = queryOne(PENDING_SELECT + ' WHERE id = ?', [id], mapPending)
+  if (!o) throw new Error('挂单不存在')
+  if (o.status !== 'pending' && o.status !== 'partial') throw new Error('仅待成交/部分成交挂单可改单')
+  const qty = patch.qty != null ? patch.qty : o.qty
+  const limitPrice = patch.limitPrice != null ? patch.limitPrice : o.limitPrice
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error('数量必须大于 0')
+  if (qty < o.filledQty) throw new Error('数量不能小于已成交数量')
+  if (!Number.isFinite(limitPrice) || limitPrice <= 0) throw new Error('限价必须大于 0')
+  const remain = qty - o.filledQty
+  if (remain <= 0) throw new Error('剩余可成交数量须大于 0')
+  run(
+    `UPDATE pending_orders SET qty = ?, limit_price = ?, updated_at = ?, status = CASE WHEN filled_qty > 0 THEN 'partial' ELSE 'pending' END WHERE id = ?`,
+    [qty, limitPrice, new Date().toISOString(), id],
+  )
+  const updated = queryOne(PENDING_SELECT + ' WHERE id = ?', [id], mapPending)
+  if (!updated) throw new Error('改单失败')
+  return updated
+}
+
 /**
  * 行情刷新时撮合待成交限价单。
- * 演示规则（非券商撮合）：买限价 last<=limit 成交；卖限价 last>=limit 成交；成交价用限价。
+ * 演示规则（非券商撮合）：买限价 last<=limit；卖限价 last>=limit；成交价用限价。
+ * 支持部分成交：现金/持仓不足时尽量成交可成交数量，剩余继续挂着。
  */
 export function matchPendingOrders(
   priceMap: Record<string, number>,
-): Array<{ order: PendingOrder; trade: Trade }> {
-  const pending = listPendingOrders('pending')
-  const filled: Array<{ order: PendingOrder; trade: Trade }> = []
+): Array<{ order: PendingOrder; trade: Trade; partial: boolean }> {
+  const pending = [
+    ...listPendingOrders('pending'),
+    ...listPendingOrders('partial'),
+  ]
+  const filled: Array<{ order: PendingOrder; trade: Trade; partial: boolean }> = []
   for (const o of pending) {
     const last = priceMap[o.symbol]
     if (!Number.isFinite(last)) continue
     const hit =
       (o.side === 'buy' && last! <= o.limitPrice) || (o.side === 'sell' && last! >= o.limitPrice)
     if (!hit) continue
+    const remain = Math.max(0, o.qty - (o.filledQty || 0))
+    if (remain <= 0) continue
+    const tryQty = [remain]
     try {
-      const trade = placeTrade({
-        symbol: o.symbol,
-        name: o.name,
-        side: o.side,
-        qty: o.qty,
-        price: o.limitPrice,
-      })
-      run(
-        `UPDATE pending_orders SET status = 'filled', updated_at = ?, filled_trade_id = ? WHERE id = ?`,
-        [new Date().toISOString(), trade.id, o.id],
-      )
-      filled.push({ order: { ...o, status: 'filled', filledTradeId: trade.id }, trade })
-    } catch (e) {
-      // 现金/持仓不足则保持挂单
-      console.warn('matchPendingOrder skip', o.id, e)
+      const account = getAccount()
+      const feeRate = Math.max(0, Number(getSetting('paperFeeRate') ?? 0.0003) || 0)
+      const unit = o.limitPrice * (1 + feeRate) || o.limitPrice
+      if (o.side === 'buy' && unit > 0) {
+        let maxBuy = Math.floor(account.cash / unit)
+        if (maxBuy >= 100) maxBuy = Math.floor(maxBuy / 100) * 100
+        if (maxBuy > 0 && maxBuy < remain) tryQty.push(maxBuy)
+      }
+      if (o.side === 'sell') {
+        const pos = listPositions().find((p) => p.symbol === o.symbol)
+        const maxSell = pos ? Math.floor(pos.qty) : 0
+        if (maxSell > 0 && maxSell < remain) tryQty.push(maxSell)
+      }
+    } catch {
+      /* */
     }
+    const candidates = [...new Set(tryQty.filter((q) => q > 0))].sort((a, b) => b - a)
+    let done = false
+    for (const qty of candidates) {
+      try {
+        const trade = placeTrade({
+          symbol: o.symbol,
+          name: o.name,
+          side: o.side,
+          qty,
+          price: o.limitPrice,
+        })
+        const newFilled = (o.filledQty || 0) + qty
+        const fully = newFilled + 1e-9 >= o.qty
+        run(
+          `UPDATE pending_orders SET status = ?, updated_at = ?, filled_trade_id = ?, filled_qty = ? WHERE id = ?`,
+          [fully ? 'filled' : 'partial', new Date().toISOString(), trade.id, newFilled, o.id],
+        )
+        filled.push({
+          order: {
+            ...o,
+            status: fully ? 'filled' : 'partial',
+            filledTradeId: trade.id,
+            filledQty: newFilled,
+          },
+          trade,
+          partial: !fully,
+        })
+        done = true
+        break
+      } catch (e) {
+        console.warn('matchPendingOrder try', o.id, qty, e)
+      }
+    }
+    if (!done) console.warn('matchPendingOrder skip', o.id)
   }
   return filled
 }
@@ -1655,4 +1758,26 @@ export function addLiveTradesBulk(inputs: LiveTradeInput[]): number {
     n++
   }
   return n
+}
+
+/* ---------- Live corporate-action notes (v0.12 手动备注) ---------- */
+
+export function getLiveCorpNote(symbol: string): string {
+  return getSetting(`liveCorp:${symbol.toUpperCase()}`) || ''
+}
+
+export function setLiveCorpNote(symbol: string, note: string) {
+  setSetting(`liveCorp:${symbol.toUpperCase()}`, note.slice(0, 500))
+}
+
+export function listLiveCorpNotes(): Array<{ symbol: string; note: string }> {
+  try {
+    return queryAll(
+      `SELECT key, value FROM settings WHERE key LIKE 'liveCorp:%'`,
+      [],
+      (r) => ({ symbol: String(r[0]).replace(/^liveCorp:/, ''), note: String(r[1] || '') }),
+    ).filter((r) => r.note)
+  } catch {
+    return []
+  }
 }

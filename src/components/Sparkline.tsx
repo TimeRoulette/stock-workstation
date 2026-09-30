@@ -5,13 +5,13 @@ interface Props {
   values: number[]
   width?: number
   height?: number
-  /** 示意数据时弱化描边 */
+  /** 演示数据时弱化描边 */
   sample?: boolean
   className?: string
   title?: string
 }
 
-/** 迷你折线：真实收盘序列；示意时虚线+半透明 */
+/** 迷你折线：真实收盘序列；演示时虚线+半透明 */
 export function Sparkline({
   values,
   width = 64,
@@ -55,10 +55,10 @@ export function Sparkline({
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      aria-label={title || (sample ? '示意走势' : '近端收盘走势')}
+      aria-label={title || (sample ? '演示走势' : '近端收盘走势')}
       role="img"
     >
-      <title>{title || (sample ? '示意走势' : '近端收盘走势')}</title>
+      <title>{title || (sample ? '演示走势' : '近端收盘走势')}</title>
       <polyline
         fill="none"
         stroke="currentColor"

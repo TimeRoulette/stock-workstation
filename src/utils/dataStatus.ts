@@ -1,8 +1,14 @@
 import type { Quote, QuoteProviderMode, QuoteSource } from '../types'
+import {
+  DATA_KIND_BADGE,
+  DATA_KIND_HINT,
+  PAGES_QUOTE_HINT,
+  type DataStatusKind,
+} from './dataStatusLabels'
+
+export type { DataStatusKind }
 
 /** 顶栏汇总数据态 */
-export type DataStatusKind = 'live' | 'delayed' | 'cache' | 'mock'
-
 export interface DataStatusSummary {
   kind: DataStatusKind
   label: string
@@ -35,7 +41,7 @@ export function isPagesHost(): boolean {
 
 /**
  * 按当前行情汇总顶栏徽章：
- * 示意 > 缓存 > 延迟 > 实时（任一强降级优先；mock 模式强制示意）
+ * 演示 > 旧行情 > 延时 > 最新（任一强降级优先；mock 模式强制演示）
  */
 export function summarizeDataStatus(
   quotes: Record<string, Quote> | Quote[],
@@ -56,53 +62,44 @@ export function summarizeDataStatus(
   if (opts?.providerMode === 'mock') {
     return {
       kind: 'mock',
-      label: '示意',
-      detail: '已选「仅本地模拟」行情源',
+      label: DATA_KIND_BADGE.mock,
+      detail: `已选「仅本地模拟」行情源。${DATA_KIND_HINT.mock}`,
       counts,
       total,
     }
   }
 
   let kind: DataStatusKind = 'live'
-  let detail = '行情多为实时源'
+  let detail = '行情多为公开最新源'
 
   if (total === 0) {
     kind = isPagesHost() ? 'delayed' : 'live'
     detail = isPagesHost()
-      ? '公开站可能演示/延迟；加入自选后刷新可见具体状态'
+      ? PAGES_QUOTE_HINT
       : '暂无行情，加入自选后刷新'
   } else if (counts.mock > 0 && counts.mock >= Math.max(1, Math.ceil(total * 0.5))) {
     kind = 'mock'
-    detail = `${counts.mock}/${total} 只为示意行情（真源不可用或仅模拟）`
+    detail = `${counts.mock}/${total} 只为演示数据（真源不可用或仅模拟）。${DATA_KIND_HINT.mock}`
   } else if (counts.mock > 0) {
     kind = 'mock'
-    detail = `${counts.mock}/${total} 只示意，其余真源/缓存`
+    detail = `${counts.mock}/${total} 只演示，其余真源/旧行情。${DATA_KIND_HINT.mock}`
   } else if (counts.cache > 0 && counts.cache >= Math.max(1, Math.ceil(total * 0.5))) {
     kind = 'cache'
-    detail = `${counts.cache}/${total} 只来自本地缓存`
+    detail = `${counts.cache}/${total} 只来自刚才存下的行情。${DATA_KIND_HINT.cache}`
   } else if (counts.cache > 0) {
     kind = 'cache'
-    detail = `${counts.cache}/${total} 只用缓存，真源暂不可用`
+    detail = `${counts.cache}/${total} 只用旧行情，真源暂不可用。${DATA_KIND_HINT.cache}`
   } else if (counts.delayed > 0) {
     kind = 'delayed'
-    detail = `${counts.delayed}/${total} 只延迟（含 Yahoo 等）`
+    detail = `${counts.delayed}/${total} 只延时行情（含 Yahoo 等，通常数分钟）。${DATA_KIND_HINT.delayed}`
   } else {
     kind = 'live'
-    detail = `${counts.live}/${total} 只实时源`
+    detail = `${counts.live}/${total} 只最新公开源。${DATA_KIND_HINT.live}`
   }
 
-  if (isPagesHost() && kind === 'live') {
-    detail = `${detail} · 公开站可能演示/延迟`
-  } else if (isPagesHost() && kind !== 'mock') {
-    detail = `${detail} · 公开站可能演示/延迟`
+  if (isPagesHost() && kind !== 'mock') {
+    detail = `${detail} · ${PAGES_QUOTE_HINT}`
   }
 
-  const labelMap: Record<DataStatusKind, string> = {
-    live: '实时',
-    delayed: '延迟',
-    cache: '缓存',
-    mock: '示意',
-  }
-
-  return { kind, label: labelMap[kind], detail, counts, total }
+  return { kind, label: DATA_KIND_BADGE[kind], detail, counts, total }
 }

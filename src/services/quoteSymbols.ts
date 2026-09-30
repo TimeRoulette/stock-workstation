@@ -98,17 +98,17 @@ export function sourceBadgeLabel(source: QuoteSource): string {
     case 'yahoo':
       return 'Yahoo'
     case 'cache':
-      return '缓存'
+      return '旧行情'
     default:
-      return '模拟'
+      return '演示'
   }
 }
 
 /** 简单 FX 提示（非实时汇率，仅展示用） */
 export const FX_HINT: Record<string, { vsCny: number; note: string }> = {
   CNY: { vsCny: 1, note: '记账本位币' },
-  HKD: { vsCny: 0.92, note: '示意汇率 ≈0.92，非实时' },
-  USD: { vsCny: 7.2, note: '示意汇率 ≈7.2，非实时' },
+  HKD: { vsCny: 0.92, note: '参考汇率 ≈0.92，非实时' },
+  USD: { vsCny: 7.2, note: '参考汇率 ≈7.2，非实时' },
 }
 
 export function toCnyHint(amount: number, currency: string): string {

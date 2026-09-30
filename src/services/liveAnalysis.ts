@@ -275,14 +275,14 @@ export function parseLiveTradesCsv(csv: string): Array<{
     }
     return -1
   }
-  const iDate = idx(['date', 'tradedate', '日期', '成交日期', 'ts', 'time'])
-  const iSym = idx(['symbol', 'code', '代码', '证券代码'])
-  const iName = idx(['name', '名称', '证券名称'])
-  const iSide = idx(['side', '买卖', '方向', 'bs'])
-  const iPrice = idx(['price', '价格', '成交价', '成交价格'])
-  const iQty = idx(['qty', 'quantity', '数量', '成交量', 'volume'])
-  const iFee = idx(['fee', '费用', '佣金', '手续费'])
-  const iNote = idx(['note', '备注', '说明'])
+  const iDate = idx(['date', 'tradedate', '成交日期', '交易日期', '日期', 'ts', 'time', 'datetime', '成交时间'])
+  const iSym = idx(['symbol', 'code', '证券代码', '股票代码', '代码', 'ticker'])
+  const iName = idx(['name', '证券名称', '股票名称', '名称'])
+  const iSide = idx(['side', '买卖标志', '买卖', '方向', '操作', 'bs', 'entrustbs'])
+  const iPrice = idx(['price', '成交价格', '成交价', '价格', '均价'])
+  const iQty = idx(['qty', 'quantity', '成交数量', '成交量', '数量', 'volume', '股数'])
+  const iFee = idx(['fee', '手续费', '佣金', '费用', '总和费用'])
+  const iNote = idx(['note', '备注', '说明', '摘要'])
 
   if (iSym < 0 || iSide < 0 || iPrice < 0 || iQty < 0) {
     throw new Error('CSV 需包含：代码/买卖/价格/数量（日期可选，费用可选）')
@@ -305,22 +305,24 @@ export function parseLiveTradesCsv(csv: string): Array<{
     const rawSym = cols[iSym] || ''
     const { symbol } = normalizeSymbol(rawSym)
     if (!symbol) continue
-    const sideRaw = (cols[iSide] || '').toLowerCase()
+    const sideRaw = (cols[iSide] || '').toLowerCase().replace(/\s+/g, '')
     let side: 'buy' | 'sell' | null = null
-    if (['buy', 'b', '买', '买入', 'bid'].includes(sideRaw)) side = 'buy'
-    else if (['sell', 's', '卖', '卖出', 'ask'].includes(sideRaw)) side = 'sell'
-    if (!side) throw new Error(`第 ${li + 1} 行买卖方向无法识别：${cols[iSide]}`)
-    const qty = Number(cols[iQty])
-    const price = Number(cols[iPrice])
-    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price <= 0) {
-      throw new Error(`第 ${li + 1} 行数量/价格无效`)
-    }
+    if (['buy', 'b', '买', '买入', 'bid', 'b买', '1', '证券买入'].includes(sideRaw) || sideRaw.includes('买'))
+      side = 'buy'
+    else if (['sell', 's', '卖', '卖出', 'ask', 's卖', '2', '证券卖出'].includes(sideRaw) || sideRaw.includes('卖'))
+      side = 'sell'
+    if (!side) continue // 宽容：跳过无法识别的行
+    const qty = Number(String(cols[iQty]).replace(/,/g, ''))
+    const price = Number(String(cols[iPrice]).replace(/,/g, ''))
+    if (!Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price) || price <= 0) continue
     const fee = iFee >= 0 ? Number(cols[iFee]) || 0 : 0
     let tradeDate = iDate >= 0 ? cols[iDate] : ''
     if (!tradeDate) tradeDate = new Date().toISOString()
     else if (/^\d{4}-\d{2}-\d{2}$/.test(tradeDate)) tradeDate = `${tradeDate}T00:00:00.000Z`
     else if (!Number.isNaN(Date.parse(tradeDate))) tradeDate = new Date(tradeDate).toISOString()
-    else throw new Error(`第 ${li + 1} 行日期无法解析：${cols[iDate]}`)
+    else if (/^\d{8}$/.test(tradeDate)) {
+      tradeDate = `${tradeDate.slice(0, 4)}-${tradeDate.slice(4, 6)}-${tradeDate.slice(6, 8)}T00:00:00.000Z`
+    } else continue
     out.push({
       tradeDate,
       symbol,
@@ -352,7 +354,7 @@ export function exportLiveAnalysisMarkdown(a: LiveAnalysisResult): string {
     `- 浮动盈亏：${a.floatingPnl.toFixed(2)}${a.floatingPnlPct != null ? `（${a.floatingPnlPct.toFixed(2)}%）` : ''}`,
     `- 已实现盈亏：${a.realizedPnl.toFixed(2)}`,
     `- 胜率：${a.winRate != null ? `${a.winRate.toFixed(1)}%（${a.wins}胜/${a.losses}负，${a.closedRounds} 回合）` : '—'}`,
-    `- 最大回撤（示意）：${a.maxDrawdownPct != null ? `${a.maxDrawdownPct.toFixed(2)}%` : '—'}`,
+    `- 最大回撤（估算）：${a.maxDrawdownPct != null ? `${a.maxDrawdownPct.toFixed(2)}%` : '—'}`,
     '',
     '## 持仓集中度',
     '',
@@ -411,4 +413,83 @@ export function exportLiveAnalysisCsv(a: LiveAnalysisResult): string {
 function csvEsc(s: string): string {
   if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`
   return s
+}
+
+
+/** 持仓与成交对账：由成交推算持仓，并附带手动分红/送股备注 */
+export function reconcileLivePositions(
+  trades: LiveTrade[],
+  corpNotes: Array<{ symbol: string; note: string }> = [],
+): Array<{
+  symbol: string
+  name: string
+  qtyFromTrades: number
+  avgCost: number
+  corpNote: string
+  ok: boolean
+  hint: string
+}> {
+  const positions = computeLivePositions(trades)
+  const noteMap = new Map(corpNotes.map((n) => [n.symbol.toUpperCase(), n.note]))
+  return positions.map((p) => {
+    const corp = noteMap.get(p.symbol.toUpperCase()) || ''
+    return {
+      symbol: p.symbol,
+      name: p.name,
+      qtyFromTrades: p.qty,
+      avgCost: p.avgCost,
+      corpNote: corp,
+      ok: true,
+      hint: corp ? '已附分红/送股备注（手动，不自动调数量）' : '数量由成交 FIFO 推算',
+    }
+  })
+}
+
+export function liveSymbolPerformance(trades: LiveTrade[]): Array<{
+  symbol: string
+  name: string
+  realizedPnl: number
+  rounds: number
+  winRate: number | null
+}> {
+  const rounds = computeClosedRounds(liveToPaperTrades(trades))
+  const map = new Map<string, { name: string; pnl: number; rounds: number; wins: number }>()
+  for (const r of rounds) {
+    const cur = map.get(r.symbol) || { name: r.name, pnl: 0, rounds: 0, wins: 0 }
+    cur.pnl += r.pnl
+    cur.rounds += 1
+    if (r.win) cur.wins += 1
+    cur.name = r.name || cur.name
+    map.set(r.symbol, cur)
+  }
+  return [...map.entries()]
+    .map(([symbol, v]) => ({
+      symbol,
+      name: v.name,
+      realizedPnl: v.pnl,
+      rounds: v.rounds,
+      winRate: v.rounds ? (v.wins / v.rounds) * 100 : null,
+    }))
+    .sort((a, b) => b.realizedPnl - a.realizedPnl)
+}
+
+/** 实盘 vs 模拟对比小卡数据 */
+export function compareLiveVsPaper(opts: {
+  liveFloating: number
+  liveRealized: number
+  paperEquityReturnPct: number | null
+  paperFloating: number
+}): {
+  liveTotal: number
+  paperHint: string
+  deltaHint: string
+} {
+  const liveTotal = opts.liveFloating + opts.liveRealized
+  const paperHint =
+    opts.paperEquityReturnPct != null
+      ? `模拟净值区间收益 ${opts.paperEquityReturnPct.toFixed(2)}%`
+      : `模拟浮动 ${opts.paperFloating.toFixed(0)}`
+  const deltaHint =
+    '两边账户与规则不同，数字不可直接当「谁更强」；仅供并排浏览。非投资建议。'
+  return { liveTotal, paperHint, deltaHint }
 }

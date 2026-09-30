@@ -15,5 +15,19 @@ interface Window {
     setMinimizeToTray?: (enabled: boolean) => Promise<{ ok: boolean; minimizeToTray: boolean }>
     getLlmKey?: () => Promise<{ key: string }>
     setLlmKey?: (key: string) => Promise<{ ok: boolean; error?: string }>
+    httpFetch?: (payload: {
+      url: string
+      method?: string
+      headers?: Record<string, string>
+      timeoutMs?: number
+    }) => Promise<{
+      ok: boolean
+      status?: number
+      contentType?: string
+      bodyText?: string | null
+      bodyBase64?: string | null
+      headers?: Record<string, string>
+      error?: string
+    }>
   }
 }

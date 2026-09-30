@@ -188,3 +188,41 @@ ipcMain.handle('sw:llm-set-key', async (_evt, key) => {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 })
+
+/** 原生 HTTP 代理：绕过渲染进程 CORS，供 Pages 以外的桌面壳拉真源 */
+ipcMain.handle('sw:http-fetch', async (_evt, payload) => {
+  const url = String(payload?.url || '')
+  if (!/^https?:\/\//i.test(url)) {
+    return { ok: false, error: '仅允许 http(s) URL' }
+  }
+  const method = String(payload?.method || 'GET').toUpperCase()
+  const headers = payload?.headers && typeof payload.headers === 'object' ? payload.headers : {}
+  const timeoutMs = Math.min(Math.max(Number(payload?.timeoutMs) || 7000, 1000), 30000)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      method,
+      headers,
+      signal: ctrl.signal,
+      redirect: 'follow',
+    })
+    clearTimeout(timer)
+    const buf = Buffer.from(await res.arrayBuffer())
+    const contentType = res.headers.get('content-type') || ''
+    // 文本优先；否则 base64
+    const isText = /json|text|javascript|xml|csv|html/i.test(contentType) || buf.length < 2_000_000
+    return {
+      ok: res.ok,
+      status: res.status,
+      contentType,
+      bodyText: isText ? buf.toString('utf8') : null,
+      bodyBase64: isText ? null : buf.toString('base64'),
+      headers: { 'content-type': contentType },
+    }
+  } catch (e) {
+    clearTimeout(timer)
+    const msg = e?.name === 'AbortError' ? `超时 ${timeoutMs}ms` : e instanceof Error ? e.message : String(e)
+    return { ok: false, error: msg }
+  }
+})

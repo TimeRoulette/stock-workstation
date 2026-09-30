@@ -12,7 +12,7 @@ import { BriefPage } from './pages/BriefPage'
 import { JournalPage } from './pages/JournalPage'
 import { SettingsPage } from './pages/SettingsPage'
 import * as db from './services/db'
-import { quoteService } from './services/quotes'
+import { quoteService, syncQuoteProxyFromDb } from './services/quotes'
 import type { AppSettings, Quote, ToastItem } from './types'
 import { useTheme } from './hooks/useTheme'
 import { summarizeDataStatus, type DataStatusSummary } from './utils/dataStatus'
@@ -72,6 +72,11 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
     electronOpenAtLogin: false,
     electronMinimizeToTray: false,
     llmSummaryEnabled: false,
+    quoteProxyUrl: '',
+    paperFeeRate: 0.0003,
+    paperStampTaxRate: 0.0005,
+    riskMaxPositionPct: 0.35,
+    riskDailyLossPct: 0.03,
   })
   const [bootError, setBootError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -128,6 +133,7 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
       .then(() => {
         const s = db.getSettings()
         setSettings(s)
+        syncQuoteProxyFromDb()
         quoteService.setMode(s.quoteProvider)
         setShowCoach(!s.coachDismissed)
         refreshAlertCount()

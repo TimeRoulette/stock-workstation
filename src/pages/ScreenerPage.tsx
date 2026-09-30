@@ -345,7 +345,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
         })
         if (token !== techAbort.current) return
         if (r.source === 'mock' || r.rows.length === 0) {
-          setTechError(r.error || '全市场列表不可用，已停止（不使用示意列表）')
+          setTechError(r.error || '全市场列表不可用，已停止（不使用演示列表）')
           setTechScanning(false)
           setListProgress(null)
           return
@@ -386,7 +386,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
           if (r.source === 'mock') {
             setTechError(
               r.error ||
-                '涨跌幅榜为示意数据，已停止技术扫描（示意榜不可伪装为真实技术命中）',
+                '涨跌幅榜为演示数据，已停止技术扫描（演示榜不可伪装为真实技术命中）',
             )
             setTechScanning(false)
             return
@@ -479,7 +479,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       if (hits.length === 0) {
         setTechError(
           mockSkip > 0 || lastFailed > 0
-            ? `扫描完成：无真实命中（示意跳过 ${mockSkip}，失败 ${lastFailed}）`
+            ? `扫描完成：无真实命中（演示跳过 ${mockSkip}，失败 ${lastFailed}）`
             : '扫描完成：当前条件无命中（规则偏严或数据不足属正常）',
         )
       } else if (market === 'A' || techScope === 'top200' || techScope === 'watchlist') {
@@ -612,7 +612,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
     if (asOf) parts.push(fmtTime(asOf))
     if (mainTab !== 'tech') {
       if (source === 'eastmoney') parts.push('东财公开榜')
-      else if (source === 'mock') parts.push('示意数据')
+      else if (source === 'mock') parts.push('演示数据')
     }
     if (total > 0 && mainTab !== 'tech') parts.push(`全市场约 ${total}`)
     if (loading || techScanning) parts.push('加载中')
@@ -659,7 +659,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       <div className="page-body">
         <div className="tip-banner">
           数据来自东方财富公开 list 接口，通常有延迟，仅供学习研究，不构成投资建议。个股榜可加载至前{' '}
-          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。技术筛选推荐前 {SCREENER_MAX_ROWS}/自选；全市场慢且公开站受限。结果可本地快照；示意 K 不计命中。
+          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。技术筛选推荐前 {SCREENER_MAX_ROWS}/自选；全市场慢且公开站受限。结果可本地快照；演示 K 不计命中。
         </div>
 
         <div className="toolbar screener-toolbar" style={{ marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
@@ -757,7 +757,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                 <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
                   勾选条件或点预置卡后扫描。优先用前 {SCREENER_MAX_ROWS} / 自选 / 板块；全市场慢且 Pages
                   常受限，推荐本机或 Electron。并发：全市场 3、其它 4；超时 10s；K 线缓存约 10
-                  分钟。示意 K 与失败跳过。可停止并保存快照。
+                  分钟。演示 K 与失败跳过。可停止并保存快照。
                 </div>
                 <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                   {(
@@ -924,10 +924,10 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                     disabled={techScanning}
                     onClick={() => {
                       clearTechCandleCache()
-                      onToast?.({ message: '已清空技术筛选 K 线缓存', type: 'info' })
+                      onToast?.({ message: '已清空技术筛选 K 线本地缓存', type: 'info' })
                     }}
                   >
-                    清缓存
+                    清本地K
                   </button>
                 </div>
                 <details className="tech-rule-details">
@@ -967,7 +967,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                     {techProgress?.current ? ` · ${techProgress.current}` : ''} · 命中{' '}
                     {techProgress?.hits ?? 0}
                     {techFailed ? ` · 失败 ${techFailed}` : ''}
-                    {techMockSkipped ? ` · 示意跳过 ${techMockSkipped}` : ''}
+                    {techMockSkipped ? ` · 演示跳过 ${techMockSkipped}` : ''}
                     {techInsufficient ? ` · K线不足 ${techInsufficient}` : ''}
                   </div>
                 </div>
@@ -977,14 +977,14 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
             {!techScanning && techHits.length === 0 ? (
               <div className="empty-state panel">
                 <h3>尚未扫描或无命中</h3>
-                <p>选择条件后点右上角「开始扫描」。数据不足或仅有示意 K 线时不会假命中。</p>
+                <p>选择条件后点右上角「开始扫描」。数据不足或仅有演示 K 线时不会假命中。</p>
               </div>
             ) : techHits.length > 0 ? (
               <div className="panel">
                 <div className="panel-header">
                   <span>
                     技术命中 · {techHits.length} 只
-                    {techMockSkipped ? ` · 示意跳过 ${techMockSkipped}` : ''}
+                    {techMockSkipped ? ` · 演示跳过 ${techMockSkipped}` : ''}
                     {techFailed ? ` · 失败 ${techFailed}` : ''}
                   </span>
                   <span className="muted" style={{ fontSize: 12 }}>
@@ -1131,7 +1131,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                     {selectedBoard.name} · {constituents.length} 只
                   </span>
                   <span className="muted" style={{ fontSize: 12 }}>
-                    {source === 'eastmoney' ? '延迟行情' : '示意 · 非实盘'}
+                    {source === 'eastmoney' ? '延时行情' : '演示 · 非实盘'}
                   </span>
                 </div>
                 <div className="table-scroll">
@@ -1214,7 +1214,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                   {sort === 'gainers' ? '涨幅' : '跌幅'} · {boards.length} 条
                 </span>
                 <span className="muted" style={{ fontSize: 12 }}>
-                  {source === 'eastmoney' ? '延迟行情' : '示意 · 非实盘'}
+                  {source === 'eastmoney' ? '延时行情' : '演示 · 非实盘'}
                 </span>
               </div>
               <div className="table-scroll">
@@ -1301,7 +1301,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                 {rows.length < SCREENER_MAX_ROWS ? ` / 最多 ${SCREENER_MAX_ROWS}` : ''}
               </span>
               <span className="muted" style={{ fontSize: 12 }}>
-                {source === 'eastmoney' ? '延迟行情' : '示意 · 非实盘'}
+                {source === 'eastmoney' ? '延时行情' : '演示 · 非实盘'}
               </span>
             </div>
             <div className="table-scroll">

@@ -38,6 +38,11 @@ export interface Quote {
   asOf: string
   delayed: boolean
   source: QuoteSource
+  /** K 线与报价交叉校验明显离谱时标「可疑」，不静默 */
+  suspicious?: boolean
+  suspiciousReason?: string
+  /** 大约延迟说明（如「约 15 分钟」），仅展示 */
+  delayHint?: string
 }
 
 export interface Candle {
@@ -138,7 +143,7 @@ export interface EquitySnapshot {
   equity: number
 }
 
-/** 日报条目数据新鲜度：实时拉取 / 本地缓存 / 示意样例 / 降级 */
+/** 日报条目数据新鲜度：最新拉取 / 旧行情 / 演示样例 / 降级 */
 export type BriefDataStatus = 'live' | 'cached' | 'sample' | 'degraded'
 
 /** 与自选的关联方式；标题关键词匹配须在 UI 标明 */
@@ -162,7 +167,7 @@ export interface BriefItem {
   symbols?: string[]
   /** 芯片跳转目标：盯盘或模拟 */
   jumpTo?: 'watchlist' | 'portfolio'
-  /** 数据状态：实时/缓存/示意/降级 */
+  /** 数据状态：最新/旧行情/演示/降级 */
   dataStatus?: BriefDataStatus
   /** 关联方式；title_keyword 时 UI 须标「标题关键词关联」 */
   matchMode?: BriefMatchMode
@@ -245,6 +250,16 @@ export interface AppSettings {
   electronMinimizeToTray: boolean
   /** 可选 LLM 总结（默认关；Key 仅本机/Electron） */
   llmSummaryEnabled: boolean
+  /** 自备行情代理 URL（CORS 中继前缀或完整网关；不进仓库密钥） */
+  quoteProxyUrl: string
+  /** 模拟佣金费率（默认 0.0003 = 0.03%） */
+  paperFeeRate: number
+  /** 模拟卖出印花税费率（默认 0.0005；买入不加） */
+  paperStampTaxRate: number
+  /** 单票仓位上限提醒（占净值比例，0=关闭，默认 0.35） */
+  riskMaxPositionPct: number
+  /** 日内亏损提醒（占净值比例，0=关闭，默认 0.03） */
+  riskDailyLossPct: number
 }
 
 export interface QuoteProvider {
@@ -302,7 +317,7 @@ export interface ImportTradesOptions {
 }
 
 /** 模拟限价挂单（待成交队列） */
-export type PendingOrderStatus = 'pending' | 'filled' | 'cancelled'
+export type PendingOrderStatus = 'pending' | 'filled' | 'cancelled' | 'partial'
 
 export interface PendingOrder {
   id: number
@@ -316,6 +331,8 @@ export interface PendingOrder {
   updatedAt: string
   filledTradeId: number | null
   note: string
+  /** 已成交数量（部分成交示意） */
+  filledQty: number
 }
 
 export interface JournalNoteInput {
