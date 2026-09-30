@@ -3,6 +3,7 @@ import { Glossary } from '../components/Glossary'
 import { SkeletonTable } from '../components/Skeleton'
 import * as db from '../services/db'
 import { evaluateAlerts, quoteService } from '../services/quotes'
+import { notifyAlertFired } from '../services/notify'
 import {
   buildRvolMap,
   rvolLevelClass,
@@ -79,7 +80,10 @@ export function VolumePage({ onToast, onAlertsChange, onFocusSymbol }: Props) {
       const rvolMap = buildRvolMap(scanned)
       const fired = evaluateAlerts(quoteMap, rvolMap)
       if (fired.length) {
-        fired.forEach((f) => onToast?.({ message: f.message, type: 'alert' }))
+        fired.forEach((f) => {
+          onToast?.({ message: f.message, type: 'alert' })
+          notifyAlertFired(f.message)
+        })
         onAlertsChange?.()
       }
     } catch (e) {

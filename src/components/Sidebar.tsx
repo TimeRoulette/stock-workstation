@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { ThemeToggle } from './ThemeToggle'
+import { DataStatusBadge } from './DataStatusBadge'
+import { Icons } from './Icon'
 import type { ThemeMode } from '../utils/theme'
+import type { DataStatusSummary } from '../utils/dataStatus'
 
 export type PageKey =
   | 'watchlist'
@@ -11,14 +14,19 @@ export type PageKey =
   | 'journal'
   | 'settings'
 
-const NAV: Array<{ key: PageKey; label: string; icon: string; hint: string }> = [
-  { key: 'watchlist', label: '盯盘', icon: '◎', hint: '自选 · K线 · 提醒' },
-  { key: 'volume', label: '量监', icon: '▦', hint: 'RVOL · 放量' },
-  { key: 'screener', label: '选股', icon: '▣', hint: '涨跌幅排名' },
-  { key: 'portfolio', label: '模拟', icon: '▤', hint: '纸上交易 · CSV' },
-  { key: 'brief', label: '日报', icon: '☰', hint: '简报 · 持仓关联' },
-  { key: 'journal', label: '复盘', icon: '✎', hint: '交易笔记' },
-  { key: 'settings', label: '设置', icon: '⚙', hint: '健康 · 快捷键' },
+const NAV: Array<{
+  key: PageKey
+  label: string
+  Icon: (typeof Icons)['watchlist']
+  hint: string
+}> = [
+  { key: 'watchlist', label: '盯盘', Icon: Icons.watchlist, hint: '自选 · K线 · 提醒' },
+  { key: 'volume', label: '量监', Icon: Icons.volume, hint: 'RVOL · 放量' },
+  { key: 'screener', label: '选股', Icon: Icons.screener, hint: '涨跌幅排名' },
+  { key: 'portfolio', label: '模拟', Icon: Icons.portfolio, hint: '纸上交易 · CSV' },
+  { key: 'brief', label: '日报', Icon: Icons.brief, hint: '简报 · 持仓关联' },
+  { key: 'journal', label: '复盘', Icon: Icons.journal, hint: '交易笔记' },
+  { key: 'settings', label: '设置', Icon: Icons.settings, hint: '健康 · 快捷键' },
 ]
 
 interface Props {
@@ -28,13 +36,21 @@ interface Props {
   onShowShortcuts?: () => void
   theme: ThemeMode
   onThemeChange: (theme: ThemeMode) => void
+  dataStatus?: DataStatusSummary | null
 }
 
-export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, theme, onThemeChange }: Props) {
+export function Sidebar({
+  current,
+  onNavigate,
+  alertCount = 0,
+  onShowShortcuts,
+  theme,
+  onThemeChange,
+  dataStatus,
+}: Props) {
   const [collapsed, setCollapsed] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
-  // 窄屏切页后自动收起抽屉
   useEffect(() => {
     setDrawerOpen(false)
   }, [current])
@@ -49,7 +65,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
         title={item.hint}
       >
         <span className="nav-icon">
-          {item.icon}
+          <item.Icon />
           {item.key === 'watchlist' && alertCount > 0 && (
             <span className="nav-badge">{alertCount > 9 ? '9+' : alertCount}</span>
           )}
@@ -64,16 +80,17 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
       </button>
     ))
 
+  const statusSlot = dataStatus ? <DataStatusBadge status={dataStatus} compact={collapsed} /> : null
+
   return (
     <>
-      {/* 桌面 / 平板侧栏 */}
       <aside className={`sidebar desktop-sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="brand">
           <div className="brand-mark">股</div>
           {!collapsed && (
             <div className="brand-text">
               <h1>股票工作台</h1>
-              <p>v0.9.1 · 本地优先</p>
+              <p>v0.9.2 · 本地优先</p>
             </div>
           )}
           <button
@@ -82,9 +99,10 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
             title={collapsed ? '展开侧栏' : '收起侧栏'}
             onClick={() => setCollapsed((c) => !c)}
           >
-            {collapsed ? '»' : '«'}
+            {collapsed ? <Icons.chevronRight /> : <Icons.chevronLeft />}
           </button>
         </div>
+        {statusSlot && <div className="sidebar-status">{statusSlot}</div>}
         {navButtons()}
         <div className="sidebar-theme-row">
           <ThemeToggle theme={theme} onChange={onThemeChange} />
@@ -99,7 +117,6 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
         )}
       </aside>
 
-      {/* 手机顶栏 + 抽屉 */}
       <header className="mobile-topbar">
         <button
           type="button"
@@ -107,12 +124,13 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
           aria-label="打开菜单"
           onClick={() => setDrawerOpen(true)}
         >
-          ☰
+          <Icons.menu />
         </button>
         <div className="mobile-topbar-title">
           <span className="brand-mark sm">股</span>
           <span>{NAV.find((n) => n.key === current)?.label || '股票工作台'}</span>
         </div>
+        {dataStatus && <DataStatusBadge status={dataStatus} compact />}
         <ThemeToggle theme={theme} onChange={onThemeChange} />
         <button
           type="button"
@@ -140,7 +158,7 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
               <div className="brand-mark">股</div>
               <div className="brand-text">
                 <h1>股票工作台</h1>
-                <p>v0.9.1 · 本地优先</p>
+                <p>v0.9.2 · 本地优先</p>
               </div>
               <button
                 type="button"
@@ -148,9 +166,14 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
                 aria-label="关闭"
                 onClick={() => setDrawerOpen(false)}
               >
-                ✕
+                <Icons.close />
               </button>
             </div>
+            {dataStatus && (
+              <div className="sidebar-status" style={{ padding: '0 12px 8px' }}>
+                <DataStatusBadge status={dataStatus} />
+              </div>
+            )}
             {navButtons()}
             <div className="sidebar-theme-row">
               <ThemeToggle theme={theme} onChange={onThemeChange} />
@@ -162,7 +185,6 @@ export function Sidebar({ current, onNavigate, alertCount = 0, onShowShortcuts, 
         </div>
       )}
 
-      {/* 手机底部 Tab */}
       <nav className="mobile-tabbar" aria-label="主导航">
         {navButtons({ mobileTab: true })}
       </nav>

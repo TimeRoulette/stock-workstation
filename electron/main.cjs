@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell } = require('electron')
+const { app, BrowserWindow, shell, ipcMain, Notification } = require('electron')
 const path = require('path')
 
 const isDev = !app.isPackaged
@@ -42,4 +42,26 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+ipcMain.handle('sw:notify-permission', async () => {
+  // Electron 桌面通知一般无需显式权限；对齐 Notification API 语义
+  if (!Notification.isSupported()) return 'denied'
+  return 'granted'
+})
+
+ipcMain.handle('sw:notify-show', async (_evt, payload) => {
+  if (!Notification.isSupported()) return
+  const n = new Notification({
+    title: payload?.title || '股票工作台',
+    body: payload?.body || '',
+    silent: false,
+  })
+  n.on('click', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+  n.show()
 })

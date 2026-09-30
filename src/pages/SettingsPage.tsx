@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Advanced } from '../components/Advanced'
 import * as db from '../services/db'
 import { getProviderHealth, quoteService } from '../services/quotes'
@@ -7,6 +7,20 @@ import { fmtDateTime } from '../utils/format'
 import type { AppSettings, ProviderHealth, QuoteProviderMode } from '../types'
 import { ThemeToggle } from '../components/ThemeToggle'
 import type { ThemeMode } from '../utils/theme'
+import {
+  BACKUP_FIELD_HELP,
+  downloadBackup,
+  importWorkstationBackup,
+  validateBackup,
+} from '../services/backup'
+import {
+  getNotifyPermission,
+  requestNotifyPermission,
+  sendSystemNotification,
+  setNotifyEnabledSetting,
+} from '../services/notify'
+import { Icons } from '../components/Icon'
+import { isPagesHost } from '../utils/dataStatus'
 
 interface Props {
   settings: AppSettings
@@ -28,6 +42,9 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
   const [clearJournal, setClearJournal] = useState(false)
   const [restoreCash, setRestoreCash] = useState(true)
   const isElectron = Boolean(window.stockWorkstation?.isElectron)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [notifyPerm, setNotifyPerm] = useState(() => getNotifyPermission())
+  const [importBusy, setImportBusy] = useState(false)
 
   useEffect(() => {
     setHealth(getProviderHealth())
@@ -485,6 +502,190 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
           </div>
         </div>
 
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">
+            <span>系统通知</span>
+            <Icons.bell />
+          </div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              价格 / RVOL 提醒触发时，在已授权且非免打扰时段推送系统通知（Web Notification 或 Electron 桌面通知）。不做微信/钉钉。
+            </p>
+            {isPagesHost() && (
+              <p className="muted" style={{ fontSize: 12 }}>
+                公开站可能演示/延迟；部分浏览器需用户手势后才可授权通知。
+              </p>
+            )}
+            <div className="form-row" style={{ alignItems: 'center' }}>
+              <label>启用通知</label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={settings.notifyEnabled}
+                  onChange={async (e) => {
+                    const on = e.target.checked
+                    if (on) {
+                      const perm = await requestNotifyPermission()
+                      setNotifyPerm(perm)
+                      if (perm !== 'granted') {
+                        setMsg(perm === 'denied' ? '通知权限被拒绝，请在浏览器设置中开启' : '无法请求通知权限')
+                        setNotifyEnabledSetting(false)
+                        onChange({ ...settings, notifyEnabled: false })
+                        return
+                      }
+                    }
+                    setNotifyEnabledSetting(on)
+                    onChange({ ...settings, notifyEnabled: on })
+                    setMsg(on ? '已启用系统通知' : '已关闭系统通知')
+                  }}
+                />
+                授权后推送桌面/系统通知
+              </label>
+            </div>
+            <p className="muted" style={{ fontSize: 12 }}>
+              权限状态：
+              {notifyPerm === 'granted'
+                ? '已授权'
+                : notifyPerm === 'denied'
+                  ? '已拒绝'
+                  : notifyPerm === 'unsupported'
+                    ? '不支持'
+                    : '未请求'}
+              {' · '}免打扰时段内不会推送（与 Toast 一致）
+            </p>
+            <div className="toolbar" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={async () => {
+                  let perm = getNotifyPermission()
+                  if (perm !== 'granted') {
+                    perm = await requestNotifyPermission()
+                    setNotifyPerm(perm)
+                  }
+                  if (perm !== 'granted') {
+                    setMsg('请先允许通知权限')
+                    return
+                  }
+                  if (!settings.notifyEnabled) {
+                    setNotifyEnabledSetting(true)
+                    onChange({ ...settings, notifyEnabled: true })
+                  }
+                  const r = await sendSystemNotification(
+                    { title: '股票工作台', body: '测试通知：权限与通道正常。' },
+                    { force: true, ignoreMute: true },
+                  )
+                  setMsg(
+                    r === 'ok'
+                      ? '已发送测试通知'
+                      : r === 'denied'
+                        ? '权限不足'
+                        : `测试失败：${r}`,
+                  )
+                }}
+              >
+                测试通知
+              </button>
+              <button
+                type="button"
+                className="btn btn-xs"
+                onClick={async () => {
+                  const perm = await requestNotifyPermission()
+                  setNotifyPerm(perm)
+                  setMsg(`权限：${perm}`)
+                }}
+              >
+                请求权限
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-header">
+            <span>工作台备份</span>
+          </div>
+          <div className="panel-body">
+            <p className="muted" style={{ fontSize: 12.5, marginTop: 0 }}>
+              导出自选、分组、提醒、成交、持仓备注、净值、复盘、设置/主题及扫描快照等核心数据为 JSON。
+              <strong>清除浏览器缓存会丢失本地数据，请定期备份。</strong>
+            </p>
+            <ul className="muted" style={{ fontSize: 12, marginTop: 0, paddingLeft: 18 }}>
+              {BACKUP_FIELD_HELP.map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() => {
+                  try {
+                    const r = downloadBackup('0.9.2')
+                    setMsg(`已下载 ${r.filename}`)
+                  } catch (e) {
+                    setMsg(e instanceof Error ? e.message : '导出失败')
+                  }
+                }}
+              >
+                <Icons.download /> 导出备份
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={importBusy}
+                onClick={() => fileRef.current?.click()}
+              >
+                <Icons.upload /> 导入并覆盖
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="application/json,.json"
+                style={{ display: 'none' }}
+                onChange={async (e) => {
+                  const file = e.target.files?.[0]
+                  e.target.value = ''
+                  if (!file) return
+                  setImportBusy(true)
+                  try {
+                    const text = await file.text()
+                    let parsed: unknown
+                    try {
+                      parsed = JSON.parse(text)
+                    } catch {
+                      setMsg('JSON 解析失败，请检查文件')
+                      return
+                    }
+                    const v = validateBackup(parsed)
+                    if (!v.ok || !v.backup) {
+                      setMsg(v.error || '备份校验失败')
+                      return
+                    }
+                    const ok1 = confirm(
+                      `即将用备份覆盖当前工作台数据（导出于 ${v.backup.exportedAt}）。此操作不可撤销，是否继续？`,
+                    )
+                    if (!ok1) return
+                    const ok2 = confirm('二次确认：确定覆盖自选、成交、提醒、复盘等全部核心数据？')
+                    if (!ok2) return
+                    importWorkstationBackup(v.backup)
+                    const s = db.getSettings()
+                    onChange(s)
+                    quoteService.setMode(s.quoteProvider)
+                    setMsg('备份已导入，建议刷新页面以确保界面同步')
+                    setTimeout(() => window.location.reload(), 800)
+                  } catch (err) {
+                    setMsg(err instanceof Error ? err.message : '导入失败')
+                  } finally {
+                    setImportBusy(false)
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </div>
+
         <Advanced title="高级 · 模拟账户重置">
           <div className="panel" style={{ marginTop: 0 }}>
             <div className="panel-body">
@@ -524,7 +725,7 @@ export function SettingsPage({ settings, onChange, onShowCoach, onShowShortcuts,
           <div className="panel-header">关于</div>
           <div className="panel-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
             <p style={{ marginTop: 0 }}>
-              <strong>股票工作台</strong> v0.9.1 · 简单 UX，更深功能
+              <strong>股票工作台</strong> v0.9.2 · 简单 UX，更深功能
             </p>
             <p className="muted">
               运行环境：{isElectron ? `Electron (${window.stockWorkstation?.platform})` : 'Web（浏览器）'}

@@ -32,6 +32,16 @@ import {
 import { normalizeSymbol, quoteService } from '../services/quotes'
 import { fmt, fmtPct, fmtTime, safeNum } from '../utils/format'
 import type { ToastItem } from '../types'
+import {
+  clearTechScanSnapshot,
+  loadTechScanSnapshot,
+  saveTechScanSnapshot,
+  snapshotSummary,
+  type TechScanScope,
+  type TechScanSnapshot,
+} from '../services/scanSnapshot'
+import { isPagesHost } from '../utils/dataStatus'
+import { Icons } from '../components/Icon'
 
 interface Props {
   onToast?: (t: Omit<ToastItem, 'id'>) => void
@@ -106,12 +116,16 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
   const [techMockSkipped, setTechMockSkipped] = useState(0)
   const [techFailed, setTechFailed] = useState(0)
   const [techInsufficient, setTechInsufficient] = useState(0)
-  /** top200=涨跌幅前200；full=全市场代码表 */
-  const [techScope, setTechScope] = useState<'top200' | 'full'>('top200')
+  /** top200=涨跌幅前200；watchlist=自选；full=全市场代码表 */
+  const [techScope, setTechScope] = useState<TechScanScope>('top200')
   const [techHitPage, setTechHitPage] = useState(1)
   const [listProgress, setListProgress] = useState<string | null>(null)
   const techAbort = useRef(0)
   const TECH_HIT_PAGE_SIZE = 20
+  const [lastSnapshot, setLastSnapshot] = useState<TechScanSnapshot | null>(() => loadTechScanSnapshot())
+  const scanStartedAt = useRef<string | null>(null)
+  const pagesHost = isPagesHost()
+  const isElectron = Boolean(typeof window !== 'undefined' && window.stockWorkstation?.isElectron)
 
   const reloadWatch = useCallback(() => {
     try {
@@ -281,8 +295,51 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
     })
   }
 
+  const persistScanSnapshot = useCallback(
+    (opts: {
+      hits: TechScanHit[]
+      incomplete: boolean
+      progress: TechScanProgress | null
+      mockSkipped: number
+      failed: number
+      insufficient: number
+      completedAt: string | null
+    }) => {
+      const started = scanStartedAt.current || new Date().toISOString()
+      const snap = {
+        meta: {
+          scope: techScope,
+          market,
+          conditions: [...techConds],
+          combine: techCombine,
+          macdLookback,
+          pressureWindow,
+          startedAt: started,
+          updatedAt: new Date().toISOString(),
+          completedAt: opts.completedAt,
+          incomplete: opts.incomplete,
+          progress: opts.progress,
+          mockSkipped: opts.mockSkipped,
+          failed: opts.failed,
+          insufficient: opts.insufficient,
+        },
+        hits: opts.hits,
+      }
+      saveTechScanSnapshot(snap)
+      setLastSnapshot(loadTechScanSnapshot())
+    },
+    [macdLookback, market, pressureWindow, techCombine, techConds, techScope],
+  )
+
   const runTechScan = useCallback(async () => {
+    if (techScope === 'full' && pagesHost && !isElectron) {
+      const ok = confirm(
+        '全市场扫描在公开站（GitHub Pages）上通常很慢，且受 CORS/中继限制，可能中途失败。\n\n推荐：本机 npm run dev 或 Electron。\n\n仍要继续？',
+      )
+      if (!ok) return
+    }
     const token = ++techAbort.current
+    scanStartedAt.current = new Date().toISOString()
     setTechScanning(true)
     setTechError(null)
     setTechHits([])
@@ -292,6 +349,18 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
     setTechInsufficient(0)
     setListProgress(null)
     setTechProgress({ done: 0, total: 0, hits: 0, failed: 0, mockSkipped: 0, insufficient: 0 })
+    let latestHits: TechScanHit[] = []
+    let latestProgress: TechScanProgress | null = {
+      done: 0,
+      total: 0,
+      hits: 0,
+      failed: 0,
+      mockSkipped: 0,
+      insufficient: 0,
+    }
+    let mockSkip = 0
+    let lastFailed = 0
+    let lastInsufficient = 0
     try {
       let all: ScreenerRow[] = []
       if (techScope === 'full') {
@@ -318,6 +387,24 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
             `提示：${market === 'HK' ? '港股' : '美股'}全列表有页数上限，当前已加载 ${all.length} 只（接口 total≈${r.total}）。`,
           )
         }
+      } else if (techScope === 'watchlist') {
+        const wl = db.listWatchlist()
+        if (wl.length === 0) {
+          setTechError('自选为空，请先在盯盘加入股票，或改用「前200 / 板块」')
+          setTechScanning(false)
+          return
+        }
+        all = wl.map((w, i) => ({
+          rank: i + 1,
+          symbol: w.symbol,
+          name: w.name,
+          market: w.market,
+          price: 0,
+          changePercent: 0,
+          volume: 0,
+          amount: 0,
+        }))
+        setListProgress(`自选 ${all.length} 只，开始拉 K 线…`)
       } else {
         let page = 1
         let hasMore = true
@@ -347,8 +434,6 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
         return
       }
       setTechProgress({ done: 0, total: all.length, hits: 0, failed: 0, mockSkipped: 0, insufficient: 0 })
-      let mockSkip = 0
-      let lastFailed = 0
       const hits = await scanTechCandidates(
         all,
         async (symbol, days) => {
@@ -366,48 +451,175 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
           shouldAbort: () => token !== techAbort.current,
           onProgress: (p) => {
             if (token !== techAbort.current) return
+            latestProgress = p
             setTechProgress(p)
             if (p.mockSkipped != null) setTechMockSkipped(p.mockSkipped)
             if (p.failed != null) {
               lastFailed = p.failed
               setTechFailed(p.failed)
             }
-            if (p.insufficient != null) setTechInsufficient(p.insufficient)
+            if (p.insufficient != null) {
+              lastInsufficient = p.insufficient
+              setTechInsufficient(p.insufficient)
+            }
+            // 周期性保存进度元数据（命中列表在结束时再写完整）
+            if (p.done > 0 && p.done % 25 === 0) {
+              persistScanSnapshot({
+                hits: latestHits,
+                incomplete: true,
+                progress: p,
+                mockSkipped: p.mockSkipped ?? mockSkip,
+                failed: p.failed ?? lastFailed,
+                insufficient: p.insufficient ?? lastInsufficient,
+                completedAt: null,
+              })
+            }
           },
         },
       )
-      if (token !== techAbort.current) return
+      latestHits = hits
+      if (token !== techAbort.current) {
+        // 被中止：保存已有命中与进度
+        persistScanSnapshot({
+          hits: latestHits,
+          incomplete: true,
+          progress: latestProgress,
+          mockSkipped: mockSkip,
+          failed: lastFailed,
+          insufficient: lastInsufficient,
+          completedAt: null,
+        })
+        return
+      }
       setTechMockSkipped(mockSkip)
       setTechHits(hits)
       setSource('eastmoney')
       setAsOf(new Date().toISOString())
       setListProgress(null)
+      persistScanSnapshot({
+        hits,
+        incomplete: false,
+        progress: latestProgress,
+        mockSkipped: mockSkip,
+        failed: lastFailed,
+        insufficient: lastInsufficient,
+        completedAt: new Date().toISOString(),
+      })
       if (hits.length === 0) {
         setTechError(
           mockSkip > 0 || lastFailed > 0
             ? `扫描完成：无真实命中（示意跳过 ${mockSkip}，失败 ${lastFailed}）`
             : '扫描完成：当前条件无命中（规则偏严或数据不足属正常）',
         )
-      } else if (market === 'A' || techScope === 'top200') {
+      } else if (market === 'A' || techScope === 'top200' || techScope === 'watchlist') {
         setTechError(null)
       }
     } catch (e) {
       if (token !== techAbort.current) return
       setTechError(e instanceof Error ? e.message : '技术扫描失败')
+      persistScanSnapshot({
+        hits: latestHits,
+        incomplete: true,
+        progress: latestProgress,
+        mockSkipped: mockSkip,
+        failed: lastFailed,
+        insufficient: lastInsufficient,
+        completedAt: null,
+      })
     } finally {
       if (token === techAbort.current) {
         setTechScanning(false)
         setListProgress(null)
       }
     }
-  }, [macdLookback, market, pressureWindow, sort, techCombine, techConds, techScope])
+  }, [
+    isElectron,
+    macdLookback,
+    market,
+    pagesHost,
+    persistScanSnapshot,
+    pressureWindow,
+    sort,
+    techCombine,
+    techConds,
+    techScope,
+  ])
 
   const stopTechScan = useCallback(() => {
     techAbort.current += 1
     setTechScanning(false)
     setListProgress(null)
-    onToast?.({ message: '已请求停止扫描（进行中的请求会尽快结束）', type: 'info' })
-  }, [onToast])
+    // 保存中止时的进度元数据与当前命中
+    persistScanSnapshot({
+      hits: techHits,
+      incomplete: true,
+      progress: techProgress,
+      mockSkipped: techMockSkipped,
+      failed: techFailed,
+      insufficient: techInsufficient,
+      completedAt: null,
+    })
+    onToast?.({ message: '已停止并保存进度快照，可稍后查看上次结果', type: 'info' })
+  }, [
+    onToast,
+    persistScanSnapshot,
+    techFailed,
+    techHits,
+    techInsufficient,
+    techMockSkipped,
+    techProgress,
+  ])
+
+  const applyPreset = (id: 'main_rise' | 'volume_wash' | 'macd_golden') => {
+    setTechConds([id])
+    setTechCombine('any')
+    if (id === 'macd_golden') setMacdLookback(5)
+    onToast?.({ message: `已套用预置：${techConditionLabel(id)}`, type: 'info' })
+  }
+
+  const loadLastSnapshot = () => {
+    const s = loadTechScanSnapshot()
+    if (!s) {
+      onToast?.({ message: '暂无扫描快照', type: 'info' })
+      return
+    }
+    setLastSnapshot(s)
+    setTechHits(s.hits)
+    setTechConds(s.meta.conditions.length ? s.meta.conditions : ['macd_golden'])
+    setTechCombine(s.meta.combine)
+    setTechScope(s.meta.scope)
+    setMacdLookback(s.meta.macdLookback)
+    setPressureWindow(s.meta.pressureWindow)
+    setTechMockSkipped(s.meta.mockSkipped)
+    setTechFailed(s.meta.failed)
+    setTechInsufficient(s.meta.insufficient)
+    setTechProgress(s.meta.progress)
+    setTechHitPage(1)
+    setTechError(
+      s.meta.incomplete
+        ? `已加载未完成快照（${snapshotSummary(s)}）。可改范围后重新扫描；全量「继续」需重新跑剩余标的（进度已记录）。`
+        : `已加载上次结果（${snapshotSummary(s)}）`,
+    )
+    onToast?.({ message: '已加载扫描快照', type: 'success' })
+  }
+
+  const resumeIncomplete = () => {
+    const s = loadTechScanSnapshot()
+    if (!s || !s.meta.incomplete) {
+      onToast?.({ message: '没有未完成的扫描可继续', type: 'info' })
+      return
+    }
+    setTechScope(s.meta.scope)
+    setTechConds(s.meta.conditions.length ? s.meta.conditions : techConds)
+    setTechCombine(s.meta.combine)
+    setMacdLookback(s.meta.macdLookback)
+    setPressureWindow(s.meta.pressureWindow)
+    setTechHits(s.hits)
+    onToast?.({
+      message: `已恢复条件与部分命中（${s.hits.length}）。点「开始扫描」将重新跑该范围（进度 ${s.meta.progress?.done || 0}/${s.meta.progress?.total || '?'} 已记录）。`,
+      type: 'info',
+    })
+  }
 
   const subtitle = (() => {
     const parts: string[] = []
@@ -417,9 +629,11 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
         parts.push(`${techProgress.done}/${techProgress.total}`)
         parts.push(`命中 ${techProgress.hits}`)
         if (techScope === 'full') parts.push('全市场')
+        else if (techScope === 'watchlist') parts.push('自选')
       } else if (techHits.length) {
         parts.push(`命中 ${techHits.length}`)
         if (techScope === 'full') parts.push('全市场')
+        else if (techScope === 'watchlist') parts.push('自选')
       }
     } else if (mainTab === 'stocks') parts.push('个股涨跌幅')
     else if (selectedBoard) parts.push(`${selectedBoard.name} · 成分股`)
@@ -461,7 +675,9 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                 ? '扫描中…'
                 : techScope === 'full'
                   ? '全市场扫描'
-                  : '开始扫描'
+                  : techScope === 'watchlist'
+                    ? '扫描自选'
+                    : '开始扫描'
               : loading
                 ? '刷新中…'
                 : '刷新'}
@@ -472,7 +688,7 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
       <div className="page-body">
         <div className="tip-banner">
           数据来自东方财富公开 list 接口，通常有延迟，仅供学习研究，不构成投资建议。个股榜可加载至前{' '}
-          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。技术筛选可选涨跌幅前 {SCREENER_MAX_ROWS} 或全市场代码表；示意 K 线不计命中；失败跳过。
+          {SCREENER_MAX_ROWS}；板块点开可看成分股，并标注龙头/中军。技术筛选推荐前 {SCREENER_MAX_ROWS}/自选；全市场慢且公开站受限。结果可本地快照；示意 K 不计命中。
         </div>
 
         <div className="toolbar screener-toolbar" style={{ marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
@@ -568,9 +784,9 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
             <div className="panel tech-panel" style={{ marginBottom: 12, padding: 12 }}>
               <div className="tech-rules" style={{ marginBottom: 10 }}>
                 <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-                  勾选条件后扫描。范围可选涨跌幅前 {SCREENER_MAX_ROWS} 或全市场（A
-                  股沪深主板+创业板+科创板；港/美有页数上限）。全市场并发 3、前200 并发
-                  4；单票超时 10s；K 线缓存约 10 分钟。示意 K 线与失败均跳过不计命中。全市场约数千只，预计十余分钟，可随时点「停止」。
+                  勾选条件或点预置卡后扫描。优先用前 {SCREENER_MAX_ROWS} / 自选 / 板块；全市场慢且 Pages
+                  常受限，推荐本机或 Electron。并发：全市场 3、其它 4；超时 10s；K 线缓存约 10
+                  分钟。示意 K 与失败跳过。可停止并保存快照。
                 </div>
                 <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                   {(
@@ -586,6 +802,37 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                     </button>
                   ))}
                 </div>
+                <div className="tech-preset-row" style={{ marginBottom: 10 }}>
+                  <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+                    预置条件（一点套好）
+                  </div>
+                  <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="chip touch-target tech-preset-card"
+                      disabled={techScanning}
+                      onClick={() => applyPreset('main_rise')}
+                    >
+                      主升趋势
+                    </button>
+                    <button
+                      type="button"
+                      className="chip touch-target tech-preset-card"
+                      disabled={techScanning}
+                      onClick={() => applyPreset('volume_wash')}
+                    >
+                      洗盘
+                    </button>
+                    <button
+                      type="button"
+                      className="chip touch-target tech-preset-card"
+                      disabled={techScanning}
+                      onClick={() => applyPreset('macd_golden')}
+                    >
+                      MACD 金叉
+                    </button>
+                  </div>
+                </div>
                 <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
                   <div className="seg-control" role="tablist" aria-label="扫描范围">
                     <button
@@ -593,21 +840,68 @@ export function ScreenerPage({ onToast, onFocusSymbol }: Props) {
                       className={techScope === 'top200' ? 'active' : ''}
                       disabled={techScanning}
                       onClick={() => setTechScope('top200')}
+                      title="推荐：涨跌幅前200，速度快"
                     >
-                      前 {SCREENER_MAX_ROWS}
+                      前 {SCREENER_MAX_ROWS}（推荐）
+                    </button>
+                    <button
+                      type="button"
+                      className={techScope === 'watchlist' ? 'active' : ''}
+                      disabled={techScanning}
+                      onClick={() => setTechScope('watchlist')}
+                      title="仅扫描当前自选"
+                    >
+                      自选
                     </button>
                     <button
                       type="button"
                       className={techScope === 'full' ? 'active' : ''}
                       disabled={techScanning}
                       onClick={() => setTechScope('full')}
+                      title="全市场很慢，公开站受限"
                     >
-                      全市场扫描
+                      全市场
                     </button>
                   </div>
-                  {techScope === 'full' && (
-                    <span className="muted" style={{ fontSize: 12, alignSelf: 'center' }}>
-                      预计耗时：A 股全市场约 10–20 分钟（视网络/中继）
+                </div>
+                {techScope === 'full' && (
+                  <div className="state-banner warn" style={{ marginBottom: 8 }}>
+                    全市场扫描慢（A 股约 10–20 分钟），公开站受 CORS/中继限制易失败。推荐本机或 Electron；也可先用前{SCREENER_MAX_ROWS}/自选/板块。
+                    {pagesHost && !isElectron ? ' 当前为公开站环境。' : ''}
+                  </div>
+                )}
+                {techScope === 'top200' && (
+                  <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+                    默认推荐前 {SCREENER_MAX_ROWS}：更快、更稳。板块榜见上方「板块」页签。
+                  </p>
+                )}
+                <div className="toolbar" style={{ gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                  <button type="button" className="btn btn-xs" disabled={techScanning} onClick={loadLastSnapshot}>
+                    <Icons.save /> 查看上次结果
+                  </button>
+                  {lastSnapshot?.meta.incomplete && (
+                    <button type="button" className="btn btn-xs" disabled={techScanning} onClick={resumeIncomplete}>
+                      继续未完成
+                    </button>
+                  )}
+                  {lastSnapshot && (
+                    <button
+                      type="button"
+                      className="btn btn-xs"
+                      disabled={techScanning}
+                      onClick={() => {
+                        if (!confirm('清除本地扫描快照？')) return
+                        clearTechScanSnapshot()
+                        setLastSnapshot(null)
+                        onToast?.({ message: '已清除扫描快照', type: 'info' })
+                      }}
+                    >
+                      清除快照
+                    </button>
+                  )}
+                  {lastSnapshot && (
+                    <span className="muted" style={{ fontSize: 11, alignSelf: 'center' }}>
+                      {snapshotSummary(lastSnapshot)}
                     </span>
                   )}
                 </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { CoachMarks } from './components/CoachMarks'
 import { Sidebar, type PageKey } from './components/Sidebar'
 import { ShortcutsHint } from './components/ShortcutsHint'
@@ -12,8 +12,10 @@ import { JournalPage } from './pages/JournalPage'
 import { SettingsPage } from './pages/SettingsPage'
 import * as db from './services/db'
 import { quoteService } from './services/quotes'
-import type { AppSettings, ToastItem } from './types'
+import type { AppSettings, Quote, ToastItem } from './types'
 import { useTheme } from './hooks/useTheme'
+import { summarizeDataStatus, type DataStatusSummary } from './utils/dataStatus'
+import { Icons } from './components/Icon'
 
 const PAGE_BY_KEY: Record<string, PageKey> = {
   '1': 'watchlist',
@@ -58,6 +60,7 @@ export default function App() {
     muteEndHour: 7,
     volumeLookback: 20,
     defaultRvolAlert: 2,
+    notifyEnabled: false,
   })
   const [bootError, setBootError] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -67,6 +70,10 @@ export default function App() {
   const { theme, setTheme } = useTheme()
   const [focusSymbol, setFocusSymbol] = useState<string | null>(null)
   const [portfolioSymbol, setPortfolioSymbol] = useState<string | null>(null)
+  const lastQuotesRef = useRef<Record<string, Quote>>({})
+  const [dataStatus, setDataStatus] = useState<DataStatusSummary>(() =>
+    summarizeDataStatus([], { providerMode: 'auto' }),
+  )
 
   const refreshAlertCount = useCallback(() => {
     try {
@@ -84,7 +91,6 @@ export default function App() {
     }, 6000)
   }, [])
 
-  /** 导航：push 当前页到历史栈；底部 Tab / 侧栏 / 快捷键共用，不破坏 Tab 高亮 */
   const navigate = useCallback((next: PageKey) => {
     setPage((prev) => {
       if (prev === next) return prev
@@ -113,12 +119,27 @@ export default function App() {
         quoteService.setMode(s.quoteProvider)
         setShowCoach(!s.coachDismissed)
         refreshAlertCount()
+        setDataStatus(summarizeDataStatus([], { providerMode: s.quoteProvider }))
         setReady(true)
       })
       .catch((e) => {
         setBootError(e instanceof Error ? e.message : '数据库初始化失败')
       })
   }, [refreshAlertCount])
+
+  useEffect(() => {
+    const onQuotes = (ev: Event) => {
+      const detail = (ev as CustomEvent<Record<string, Quote>>).detail || {}
+      lastQuotesRef.current = detail
+      setDataStatus(summarizeDataStatus(detail, { providerMode: settings.quoteProvider }))
+    }
+    window.addEventListener('sw:quotes-updated', onQuotes)
+    return () => window.removeEventListener('sw:quotes-updated', onQuotes)
+  }, [settings.quoteProvider])
+
+  useEffect(() => {
+    setDataStatus(summarizeDataStatus(lastQuotesRef.current, { providerMode: settings.quoteProvider }))
+  }, [settings.quoteProvider])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -169,7 +190,6 @@ export default function App() {
     setShowCoach(false)
   }
 
-
   if (bootError) {
     return (
       <div className="loading boot-error">
@@ -200,12 +220,13 @@ export default function App() {
           setTheme(th)
           setSettings((s) => ({ ...s, theme: th }))
         }}
+        dataStatus={dataStatus}
       />
       <main className="main">
         {canGoBack && (
           <div className="main-backbar">
             <button type="button" className="btn back-btn touch-target" onClick={goBack} title={`返回${backLabel}`}>
-              ← 返回{backLabel ? ` ${backLabel}` : ''}
+              <Icons.chevronLeft /> 返回{backLabel ? ` ${backLabel}` : ''}
             </button>
           </div>
         )}
@@ -258,9 +279,7 @@ export default function App() {
             }}
           />
         )}
-        {page === 'journal' && (
-          <JournalPage />
-        )}
+        {page === 'journal' && <JournalPage />}
         {page === 'settings' && (
           <SettingsPage
             settings={{ ...settings, theme }}

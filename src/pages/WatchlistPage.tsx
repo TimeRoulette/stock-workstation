@@ -21,6 +21,7 @@ import {
   scanWatchlistVolume,
 } from '../services/volumeMonitor'
 import { fmt, fmtPct, fmtDateTime, fmtTime, safeNum } from '../utils/format'
+import { notifyAlertFired } from '../services/notify'
 import type {
   Candle,
   ChartPeriod,
@@ -167,7 +168,10 @@ export function WatchlistPage({
     }
     const fired = evaluateAlerts(quotes, rvolMap)
     if (fired.length) {
-      fired.forEach((f) => onToast?.({ message: f.message, type: 'alert' }))
+      fired.forEach((f) => {
+        onToast?.({ message: f.message, type: 'alert' })
+        notifyAlertFired(f.message)
+      })
       setAlerts(db.listAlerts())
       onAlertsChange?.()
     }
@@ -197,7 +201,10 @@ export function WatchlistPage({
         if (Object.keys(quotes).length && Object.keys(rvolMap).length) {
           const more = evaluateAlerts(quotes, rvolMap)
           if (more.length) {
-            more.forEach((f) => onToast?.({ message: f.message, type: 'alert' }))
+            more.forEach((f) => {
+              onToast?.({ message: f.message, type: 'alert' })
+              notifyAlertFired(f.message)
+            })
             setAlerts(db.listAlerts())
             onAlertsChange?.()
           }
@@ -483,7 +490,7 @@ export function WatchlistPage({
                       return (
                         <tr
                           key={item.id}
-                          className={selected === item.symbol ? 'selected' : ''}
+                          className={`${selected === item.symbol ? 'selected' : ''}${q?.source === 'mock' ? ' row-mock' : ''}`.trim()}
                           onClick={() => {
                             if (compareMode) toggleComparePick(item.symbol)
                             else setSelected(item.symbol)
@@ -505,6 +512,16 @@ export function WatchlistPage({
                                 <div className="mono">{item.symbol}</div>
                                 <div className="muted" style={{ fontSize: 11 }}>
                                   {q?.name || item.name}
+                                  {q?.source === 'mock' && (
+                                    <span className="mock-corner" title="示意行情，非真实成交价">
+                                      {' '}示意
+                                    </span>
+                                  )}
+                                  {q?.source === 'cache' && (
+                                    <span className="cache-corner" title="本地缓存行情">
+                                      {' '}缓存
+                                    </span>
+                                  )}
                                 </div>
                               </div>
                             </div>

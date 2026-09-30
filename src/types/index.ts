@@ -185,6 +185,8 @@ export interface AppSettings {
   volumeLookback: number
   /** 新建「相对成交量≥」提醒的默认倍数（默认 2） */
   defaultRvolAlert: number
+  /** 是否启用系统通知（需浏览器/Electron 授权） */
+  notifyEnabled: boolean
 }
 
 export interface QuoteProvider {

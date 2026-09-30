@@ -1,4 +1,5 @@
 import type { ThemeMode } from '../utils/theme'
+import { Icons } from './Icon'
 
 interface Props {
   theme: ThemeMode
@@ -18,7 +19,7 @@ export function ThemeToggle({ theme, onChange, variant = 'compact', className = 
           onClick={() => onChange('light')}
           aria-pressed={theme === 'light'}
         >
-          ☀ 日间
+          <Icons.sun /> 日间
         </button>
         <button
           type="button"
@@ -26,7 +27,7 @@ export function ThemeToggle({ theme, onChange, variant = 'compact', className = 
           onClick={() => onChange('dark')}
           aria-pressed={theme === 'dark'}
         >
-          ☾ 夜间
+          <Icons.moon /> 夜间
         </button>
       </div>
     )
@@ -42,7 +43,7 @@ export function ThemeToggle({ theme, onChange, variant = 'compact', className = 
       title={isDark ? '切换到日间' : '切换到夜间'}
       aria-label={isDark ? '切换到日间' : '切换到夜间'}
     >
-      <span aria-hidden="true">{isDark ? '☀' : '☾'}</span>
+      <span aria-hidden="true">{isDark ? <Icons.sun /> : <Icons.moon />}</span>
       <span className="theme-toggle-label">{isDark ? '日间' : '夜间'}</span>
     </button>
   )

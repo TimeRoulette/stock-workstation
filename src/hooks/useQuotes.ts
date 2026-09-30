@@ -11,6 +11,11 @@ export function useQuotes(symbols: string[], intervalSec: number) {
   const refresh = useCallback(async () => {
     if (symbols.length === 0) {
       setQuotes({})
+      try {
+        window.dispatchEvent(new CustomEvent('sw:quotes-updated', { detail: {} }))
+      } catch {
+        /* */
+      }
       return
     }
     setLoading(true)
@@ -23,6 +28,11 @@ export function useQuotes(symbols: string[], intervalSec: number) {
       })
       setQuotes(map)
       setSource(await quoteService.activeSourceLabel())
+      try {
+        window.dispatchEvent(new CustomEvent('sw:quotes-updated', { detail: map }))
+      } catch {
+        /* */
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '行情获取失败')
     } finally {

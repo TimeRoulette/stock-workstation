@@ -686,16 +686,34 @@ export function PortfolioPage({ refreshSec, onToast, onAfterTrade, prefillSymbol
 
       <ConfirmDialog
         open={!!confirmSide}
-        title={confirmSide === 'buy' ? '确认模拟买入' : '确认模拟卖出'}
+        title={
+          quotes[normalizeSymbol(symbol).symbol]?.source === 'mock'
+            ? confirmSide === 'buy'
+              ? '示意行情 · 确认买入'
+              : '示意行情 · 确认卖出'
+            : confirmSide === 'buy'
+              ? '确认模拟买入'
+              : '确认模拟卖出'
+        }
         message={
           confirmSide
-            ? `即将${confirmSide === 'buy' ? '买入' : '卖出'} ${normalizeSymbol(symbol).symbol} × ${qty}（纸上交易）。` +
-              `${orderType === 'market' ? '市价跟最新' : '限价'} ${orderCcy} ${fmt(effectivePrice())}，` +
-              `合计约 ${fmt(Number(qty) * effectivePrice(), 0)}（另计约 0.03% 佣金）。不会真实下单。`
+            ? (quotes[normalizeSymbol(symbol).symbol]?.source === 'mock'
+                ? `⚠ 当前价格来自示意/模拟源，不能当作真实市价。` +
+                  `仍要${confirmSide === 'buy' ? '买入' : '卖出'} ${normalizeSymbol(symbol).symbol} × ${qty}？` +
+                  `示意价 ${orderCcy} ${fmt(effectivePrice())}。纸上交易，不会真实下单。`
+                : `即将${confirmSide === 'buy' ? '买入' : '卖出'} ${normalizeSymbol(symbol).symbol} × ${qty}（纸上交易）。` +
+                  `${orderType === 'market' ? '市价跟最新' : '限价'} ${orderCcy} ${fmt(effectivePrice())}，` +
+                  `合计约 ${fmt(Number(qty) * effectivePrice(), 0)}（另计约 0.03% 佣金）。不会真实下单。`)
             : ''
         }
-        confirmLabel={confirmSide === 'buy' ? '确认买入' : '确认卖出'}
-        danger={confirmSide === 'sell'}
+        confirmLabel={
+          quotes[normalizeSymbol(symbol).symbol]?.source === 'mock'
+            ? '已知晓示意价，继续'
+            : confirmSide === 'buy'
+              ? '确认买入'
+              : '确认卖出'
+        }
+        danger={confirmSide === 'sell' || quotes[normalizeSymbol(symbol).symbol]?.source === 'mock'}
         onConfirm={doPlace}
         onCancel={() => setConfirmSide(null)}
       />

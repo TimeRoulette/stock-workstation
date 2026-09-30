@@ -232,6 +232,7 @@ function seedIfEmpty() {
   if (getSetting('muteEndHour') == null) setSetting('muteEndHour', '7')
   if (getSetting('volumeLookback') == null) setSetting('volumeLookback', '20')
   if (getSetting('defaultRvolAlert') == null) setSetting('defaultRvolAlert', '2')
+  if (getSetting('notifyEnabled') == null) setSetting('notifyEnabled', '0')
 
   const snapCount = queryOne<{ c: number }>(
     'SELECT COUNT(*) FROM equity_snapshots',
@@ -304,6 +305,7 @@ export function getSettings(): AppSettings {
     muteEndHour: Number.isFinite(muteEnd) ? Math.max(0, Math.min(23, Math.floor(muteEnd))) : 7,
     volumeLookback: Number.isFinite(volLb) ? Math.max(5, Math.min(120, Math.floor(volLb))) : 20,
     defaultRvolAlert: Number.isFinite(defRvol) ? Math.max(0.5, Math.min(20, defRvol)) : 2,
+    notifyEnabled: getSetting('notifyEnabled') === '1',
   }
 }
 
@@ -1006,3 +1008,137 @@ function splitCsvLine(line: string): string[] {
 }
 
 export { STARTING_CASH }
+
+/* ---------- Backup restore ---------- */
+
+export interface ReplaceWorkstationPayload {
+  watchlist: WatchlistItem[]
+  alerts: PriceAlert[]
+  account: PaperAccount
+  trades: Trade[]
+  equity: EquitySnapshot[]
+  positionNotes: PositionNote[]
+  journal: JournalNote[]
+  settings: AppSettings & { notifyEnabled?: boolean }
+}
+
+/** 用备份覆盖核心业务表（保留 quote_cache；settings 按备份写入） */
+export function replaceWorkstationData(payload: ReplaceWorkstationPayload): void {
+  if (!db) throw new Error('数据库未初始化')
+  // 清空业务表（保留 quote_cache）
+  ;[
+    'DELETE FROM watchlist',
+    'DELETE FROM price_alerts',
+    'DELETE FROM trades',
+    'DELETE FROM equity_snapshots',
+    'DELETE FROM position_notes',
+    'DELETE FROM journal_notes',
+    'DELETE FROM paper_account',
+  ].forEach((sql) => run(sql))
+
+  const acc = payload.account
+  run('INSERT INTO paper_account (id, cash, currency, created_at) VALUES (1, ?, ?, ?)', [
+    Number(acc.cash) || STARTING_CASH,
+    acc.currency || 'CNY',
+    acc.createdAt || new Date().toISOString(),
+  ])
+
+  for (const w of payload.watchlist || []) {
+    run(
+      `INSERT INTO watchlist (id, symbol, name, market, sort_order, added_at, tag)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        w.id,
+        String(w.symbol).toUpperCase(),
+        w.name || w.symbol,
+        w.market,
+        w.sortOrder ?? 0,
+        w.addedAt || new Date().toISOString(),
+        w.tag || '',
+      ],
+    )
+  }
+
+  for (const t of payload.trades || []) {
+    run(
+      'INSERT INTO trades (id, symbol, name, side, qty, price, fee, ts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [
+        t.id,
+        String(t.symbol).toUpperCase(),
+        t.name || t.symbol,
+        t.side,
+        t.qty,
+        t.price,
+        t.fee ?? 0,
+        t.ts || new Date().toISOString(),
+      ],
+    )
+  }
+
+  for (const e of payload.equity || []) {
+    run(
+      'INSERT INTO equity_snapshots (id, ts, cash, market_value, equity) VALUES (?, ?, ?, ?, ?)',
+      [e.id, e.ts, e.cash, e.marketValue, e.equity],
+    )
+  }
+
+  for (const n of payload.positionNotes || []) {
+    run(
+      `INSERT INTO position_notes (symbol, stop_loss, take_profit, note, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        String(n.symbol).toUpperCase(),
+        n.stopLoss,
+        n.takeProfit,
+        n.note || '',
+        n.updatedAt || new Date().toISOString(),
+      ],
+    )
+  }
+
+  for (const a of payload.alerts || []) {
+    run(
+      `INSERT INTO price_alerts
+        (id, symbol, name, type, threshold, enabled, triggered_at, created_at, note, snoozed_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        a.id,
+        String(a.symbol).toUpperCase(),
+        a.name || a.symbol,
+        a.type,
+        a.threshold,
+        a.enabled ? 1 : 0,
+        a.triggeredAt,
+        a.createdAt || new Date().toISOString(),
+        a.note || '',
+        a.snoozedUntil,
+      ],
+    )
+  }
+
+  for (const j of payload.journal || []) {
+    run(
+      `INSERT INTO journal_notes (id, trade_id, symbol, title, body, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        j.id,
+        j.tradeId,
+        j.symbol || '',
+        j.title || '',
+        j.body || '',
+        j.createdAt || new Date().toISOString(),
+        j.updatedAt || new Date().toISOString(),
+      ],
+    )
+  }
+
+  const s = payload.settings
+  if (s.quoteProvider) setSetting('quoteProvider', s.quoteProvider)
+  if (s.refreshIntervalSec != null) setSetting('refreshIntervalSec', String(s.refreshIntervalSec))
+  setSetting('coachDismissed', s.coachDismissed ? '1' : '0')
+  if (s.muteStartHour != null) setSetting('muteStartHour', String(s.muteStartHour))
+  if (s.muteEndHour != null) setSetting('muteEndHour', String(s.muteEndHour))
+  if (s.volumeLookback != null) setSetting('volumeLookback', String(s.volumeLookback))
+  if (s.defaultRvolAlert != null) setSetting('defaultRvolAlert', String(s.defaultRvolAlert))
+  if (s.notifyEnabled != null) setSetting('notifyEnabled', s.notifyEnabled ? '1' : '0')
+}
