@@ -4,6 +4,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
  * Android 包装（Capacitor）脚手架。
  * - webDir: 本地 dist（离线 assets）
  * - server.url: 也可指向 GitHub Pages（TWA 式在线壳）；正式包更推荐 sync 本地 dist
+ * - CapacitorHttp.enabled: 原生 HTTP 绕过 WebView CORS（与 Electron 主进程代理同目标）
  *
  * 本仓库默认不提交庞大的 android/ 工程目录；用 npm scripts 或 GitHub Actions 生成。
  */
@@ -18,6 +19,11 @@ const config: CapacitorConfig = {
   },
   android: {
     allowMixedContent: false,
+  },
+  plugins: {
+    CapacitorHttp: {
+      enabled: true,
+    },
   },
 }
 

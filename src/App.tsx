@@ -205,15 +205,31 @@ export default function App({ instanceRole = 'primary', tryFocusPrimary }: AppPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, settings.autoCheckUpdate])
 
-  useEffect(() => {
+    useEffect(() => {
     const onQuotes = (ev: Event) => {
-      const detail = (ev as CustomEvent<Record<string, Quote>>).detail || {}
-      lastQuotesRef.current = detail
-      setDataStatus(summarizeDataStatus(detail, { providerMode: settings.quoteProvider }))
+      const raw = (ev as CustomEvent<Record<string, Quote> | { quotes?: Record<string, Quote>; fetching?: boolean }>).detail
+      let detail: Record<string, Quote> = {}
+      let fetching = false
+      if (raw && typeof raw === 'object' && 'quotes' in raw) {
+        detail = (raw as { quotes?: Record<string, Quote> }).quotes || {}
+        fetching = Boolean((raw as { fetching?: boolean }).fetching)
+      } else {
+        detail = (raw as Record<string, Quote>) || {}
+      }
+      if (Object.keys(detail).length > 0 || !fetching) {
+        lastQuotesRef.current = detail
+      }
+      setDataStatus(
+        summarizeDataStatus(lastQuotesRef.current, {
+          providerMode: settings.quoteProvider,
+          fetching,
+        }),
+      )
     }
     window.addEventListener('sw:quotes-updated', onQuotes)
     return () => window.removeEventListener('sw:quotes-updated', onQuotes)
   }, [settings.quoteProvider])
+
 
   useEffect(() => {
     setDataStatus(summarizeDataStatus(lastQuotesRef.current, { providerMode: settings.quoteProvider }))

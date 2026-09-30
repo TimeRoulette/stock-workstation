@@ -104,6 +104,9 @@ CI（`android-apk.yml`）在 soft Release 成功后会刷新 `public/app-update.
 
 ## Capacitor 脚手架（本仓库）
 
+自 **v0.12.2** 起 `capacitor.config.ts` 开启 **CapacitorHttp**（原生 HTTP 绕过 WebView CORS），行情回退与 Electron 类似，可明显减少误落「演示」。
+
+
 ### 本机（需 Android SDK）
 
 ```bash

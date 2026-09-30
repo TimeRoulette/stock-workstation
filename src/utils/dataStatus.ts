@@ -32,6 +32,11 @@ export function isPagesHost(): boolean {
   try {
     if (typeof window === 'undefined') return false
     if (window.stockWorkstation?.isElectron) return false
+    try {
+      if (window.Capacitor?.isNativePlatform?.()) return false
+    } catch {
+      /* */
+    }
     const h = window.location.hostname
     return h.endsWith('github.io') || h.includes('pages.dev')
   } catch {
@@ -41,11 +46,11 @@ export function isPagesHost(): boolean {
 
 /**
  * 按当前行情汇总顶栏徽章：
- * 演示 > 旧行情 > 延时 > 最新（任一强降级优先；mock 模式强制演示）
+ * 拉取中 > 演示 > 旧行情 > 延时 > 最新（任一强降级优先；mock 模式强制演示）
  */
 export function summarizeDataStatus(
   quotes: Record<string, Quote> | Quote[],
-  opts?: { providerMode?: QuoteProviderMode },
+  opts?: { providerMode?: QuoteProviderMode; fetching?: boolean },
 ): DataStatusSummary {
   const list = Array.isArray(quotes) ? quotes : Object.values(quotes)
   const counts: Record<DataStatusKind, number> = {
@@ -53,6 +58,7 @@ export function summarizeDataStatus(
     delayed: 0,
     cache: 0,
     mock: 0,
+    fetching: 0,
   }
   for (const q of list) {
     counts[classifyQuote(q)] += 1
@@ -66,6 +72,21 @@ export function summarizeDataStatus(
       detail: `已选「仅本地模拟」行情源。${DATA_KIND_HINT.mock}`,
       counts,
       total,
+    }
+  }
+
+  // 启动/刷新中：尚无行情，或当前全是演示且正在重拉 → 明确「拉取中」，避免误以为永远演示
+  if (opts?.fetching) {
+    const onlyMockOrEmpty = total === 0 || counts.mock === total
+    const mostlyMock = counts.mock > 0 && counts.mock >= Math.ceil(total * 0.5)
+    if (onlyMockOrEmpty || mostlyMock) {
+      return {
+        kind: 'fetching',
+        label: DATA_KIND_BADGE.fetching,
+        detail: `正在拉真行情（东财/新浪/同花顺/Yahoo）。${DATA_KIND_HINT.fetching}`,
+        counts,
+        total,
+      }
     }
   }
 

@@ -21,7 +21,7 @@ export function DataStatusBadge({ status, compact }: Props) {
     >
       <span className="data-status-dot" aria-hidden />
       <span className="data-status-label">{status.label}</span>
-      {!compact && pages && (
+      {!compact && pages && status.kind !== 'fetching' && (
         <span className="data-status-pages" title={PAGES_QUOTE_HINT}>
           公开站·桌面更准
         </span>

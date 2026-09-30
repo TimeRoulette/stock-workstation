@@ -1,6 +1,7 @@
+import { quoteCandidateUrls } from './quoteTransport'
 /**
  * 日报新闻聚合：多源公开 RSS/API（无密钥）+ 自选关联 + 早盘分区
- * Pages 无 Vite 代理：直连 → rss2json / corsproxy → 缓存 → 示意降级
+ * Pages 无 Vite 代理：直连 → rss2json / 公共中继 → 缓存 → 示意降级
  */
 import type {
   BriefDataStatus,
@@ -100,17 +101,8 @@ export function getBriefHealth(): ProviderHealth[] {
   }))
 }
 
-function isElectronRuntime(): boolean {
-  return Boolean(
-    typeof window !== 'undefined' &&
-      (window as Window & { stockWorkstation?: { isElectron?: boolean } }).stockWorkstation?.isElectron,
-  )
-}
-
 function candidateUrls(devProxy: string, absolute: string): string[] {
-  if (import.meta.env.DEV) return [devProxy]
-  if (isElectronRuntime()) return [absolute]
-  return [absolute, `https://corsproxy.io/?${encodeURIComponent(absolute)}`]
+  return quoteCandidateUrls(devProxy, absolute)
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = TIMEOUT_MS): Promise<Response> {
@@ -531,9 +523,6 @@ async function fetchEastmoneyBoards(): Promise<RawNews[]> {
       '/api/qt/clist/get?pn=1&pz=8&po=1&np=1&fltt=2&invt=2&fid=f3&fs=m:90+t:2&fields=f12,f14,f3,f62'
     const abs = `https://push2delay.eastmoney.com${path}`
     const urls = candidateUrls(`/api/eastmoney-delay${path}`, abs)
-    if (!import.meta.env.DEV && !isElectronRuntime()) {
-      urls.push(`https://corsproxy.io/?${encodeURIComponent(abs)}`)
-    }
     const res = await fetchFirstOk(urls, { headers: { Accept: 'application/json' } })
     const json = await res.json()
     const diffs: Array<Record<string, unknown>> = json?.data?.diff || []

@@ -3,6 +3,7 @@
  * 优先 push2delay；DEV 走 Vite 代理；Pages 直连 + corsproxy 回退
  * 个股榜分页：pn/pz，默认每页 50，最多 4 页 = 前 200
  */
+import { quoteCandidateUrls } from './quoteTransport'
 import type { Market, ProviderHealth } from '../types'
 import { normalizeSymbol } from './quotes'
 
@@ -138,29 +139,25 @@ function markScreener(ok: boolean, latencyMs: number, err?: string) {
   }
 }
 
-function isElectronRuntime(): boolean {
-  return Boolean(
-    typeof window !== 'undefined' &&
-      (window as Window & { stockWorkstation?: { isElectron?: boolean } }).stockWorkstation?.isElectron,
-  )
-}
-
-/** DEV 代理 + 直连 delay/push2 + corsproxy */
+/** DEV 代理 + 直连 delay/push2 + 公共中继（与行情同源策略） */
 function screenerCandidateUrls(apiPath: string): string[] {
   const absDelay = `https://push2delay.eastmoney.com${apiPath}`
   const absPush2 = `https://push2.eastmoney.com${apiPath}`
   if (import.meta.env.DEV) {
     return [`/api/eastmoney-delay${apiPath}`, `/api/eastmoney${apiPath}`]
   }
-  if (isElectronRuntime()) {
-    return [absDelay, absPush2]
+  // 原生壳：只直连；浏览器：直连 + 用户代理 + allorigins/cors.eu.org
+  const a = quoteCandidateUrls(`/api/eastmoney-delay${apiPath}`, absDelay)
+  const b = quoteCandidateUrls(`/api/eastmoney${apiPath}`, absPush2)
+  // 合并去重，delay 优先
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const u of [...a, ...b]) {
+    if (seen.has(u)) continue
+    seen.add(u)
+    out.push(u)
   }
-  return [
-    absDelay,
-    absPush2,
-    `https://corsproxy.io/?${encodeURIComponent(absDelay)}`,
-    `https://corsproxy.io/?${encodeURIComponent(absPush2)}`,
-  ]
+  return out
 }
 
 async function fetchWithTimeout(url: string, timeoutMs = TIMEOUT_MS): Promise<Response> {

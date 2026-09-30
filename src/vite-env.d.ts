@@ -9,7 +9,30 @@ interface ImportMeta {
   readonly env: ImportMetaEnv
 }
 
+interface CapacitorHttpPlugin {
+  request?: (opts: Record<string, unknown>) => Promise<{
+    status?: number
+    data?: unknown
+    headers?: Record<string, string>
+    url?: string
+  }>
+  get?: (opts: Record<string, unknown>) => Promise<{
+    status?: number
+    data?: unknown
+    headers?: Record<string, string>
+  }>
+}
+
 interface Window {
+  Capacitor?: {
+    isNativePlatform?: () => boolean
+    getPlatform?: () => string
+    Plugins?: {
+      CapacitorHttp?: CapacitorHttpPlugin
+      App?: { getInfo?: () => Promise<{ version?: string; build?: string; name?: string }> }
+      Browser?: { open?: (opts: { url: string }) => Promise<void> }
+    }
+  }
   stockWorkstation?: {
     platform: string
     isElectron: boolean

@@ -1,9 +1,9 @@
 /**
- * 数据态 UI 文案（v0.12）：内部枚举 live/delayed/cache/mock 保持兼容。
+ * 数据态 UI 文案（v0.12）：内部枚举 live/delayed/cache/mock/fetching 保持兼容。
  */
 import type { BriefDataStatus, QuoteSource } from '../types'
 
-export type DataStatusKind = 'live' | 'delayed' | 'cache' | 'mock'
+export type DataStatusKind = 'live' | 'delayed' | 'cache' | 'mock' | 'fetching'
 
 /** 顶栏短徽章 */
 export const DATA_KIND_BADGE: Record<DataStatusKind, string> = {
@@ -11,6 +11,7 @@ export const DATA_KIND_BADGE: Record<DataStatusKind, string> = {
   delayed: '延时',
   cache: '旧行情',
   mock: '演示',
+  fetching: '拉取中',
 }
 
 /** 稍长标签（列表/日报） */
@@ -19,6 +20,7 @@ export const DATA_KIND_LABEL: Record<DataStatusKind, string> = {
   delayed: '延时行情',
   cache: '刚才的行情',
   mock: '演示数据',
+  fetching: '正在拉真行情',
 }
 
 /** tooltip / 旁注 */
@@ -27,6 +29,7 @@ export const DATA_KIND_HINT: Record<DataStatusKind, string> = {
   delayed: '公开源标明或通常有数分钟延迟（如 Yahoo）；以券商为准。',
   cache: '刚才存下来的行情，可能已过时；真源暂不可用时优先用它，不会伪装成最新。',
   mock: '不是真行情，仅供界面演示。请勿据此交易判断；演示价下单需强确认。',
+  fetching: '正在向公开源请求真行情；若暂无缓存会先显示拉取中，不会立刻标成演示。',
 }
 
 export function briefStatusBadge(s: BriefDataStatus): string {
@@ -71,7 +74,7 @@ export function sourceBadgeLabelZh(source: QuoteSource): string {
 }
 
 export const PAGES_QUOTE_HINT =
-  '公开静态站受 CORS/中继限制，行情可能更慢或不准；桌面版（Electron）或本机开发代理通常更准。公开免费源本身有延迟与限流，做不到券商级。'
+  '公开静态站受 CORS/中继限制：同花顺 A 股通常可直连；东财/新浪/Yahoo 多需中继或自备代理。桌面版（Electron）与安卓壳（Capacitor 原生 HTTP）通常更准。公开免费源本身有延迟与限流，做不到券商级。'
 
 export const HONEST_QUOTE_BOUNDARY =
   '公开免费行情源本身就有延迟与限流，本工具做不到券商级实时与撮合；仅供学习研究，不构成投资建议。'

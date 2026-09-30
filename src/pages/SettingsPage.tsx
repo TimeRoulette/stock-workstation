@@ -183,18 +183,26 @@ export function SettingsPage({
         </div>
       </header>
       <div className="page-body">
-        <div className="panel" style={{ marginBottom: 16 }}>
+        <div className="panel health-panel" style={{ marginBottom: 16 }}>
           <div className="panel-header">
-            <span>行情源健康</span>
-            <button className="btn btn-xs" onClick={() => probe(false)} disabled={probing}>
+            <span>行情源健康 · 哪个通哪个挂</span>
+            <button className="btn btn-xs primary" onClick={() => probe(false)} disabled={probing}>
               {probing ? '探测中…' : '立即探测'}
             </button>
           </div>
           <div className="panel-body">
+            <div className="health-summary" role="status" aria-live="polite">
+              <span className="health-summary-ok">通 {okCount}</span>
+              <span className="health-summary-down">挂 {downCount}</span>
+              <span className="health-summary-rest muted">
+                其余 {Math.max(0, health.length - okCount - downCount)}（未测/跳过/演示）
+              </span>
+              {probing && <span className="health-summary-probing">正在探测真源…</span>}
+            </div>
             {health.length === 0 ? (
               <div className="empty-state compact">加载健康状态…</div>
             ) : (
-              <table className="data dense">
+              <table className="data dense health-table">
                 <thead>
                   <tr>
                     <th>源</th>
@@ -206,8 +214,23 @@ export function SettingsPage({
                 </thead>
                 <tbody>
                   {[...health, ...(screenerHealth ? [screenerHealth] : [])].map((h) => (
-                    <tr key={h.id} style={{ cursor: 'default' }}>
-                      <td>{h.label}</td>
+                    <tr
+                      key={h.id}
+                      className={`health-row health-row-${h.status}`}
+                      style={{ cursor: 'default' }}
+                    >
+                      <td>
+                        <strong>{h.label}</strong>
+                        {['eastmoney', 'sina', 'ths', 'yahoo'].includes(h.id) ? (
+                          <span className="muted" style={{ marginLeft: 6, fontSize: 11 }}>
+                            真源
+                          </span>
+                        ) : h.id === 'mock' ? (
+                          <span className="muted" style={{ marginLeft: 6, fontSize: 11 }}>
+                            非真行情
+                          </span>
+                        ) : null}
+                      </td>
                       <td>
                         <span className={`health-pill health-${h.status}`}>{statusLabel(h.status)}</span>
                       </td>
@@ -225,8 +248,10 @@ export function SettingsPage({
               </table>
             )}
             <p className="muted" style={{ fontSize: 12, marginBottom: 0, marginTop: 8 }}>
-              进入本页会自动探测（真实轻量请求）。「通」=可用，「挂」=失败冷却中，「慢」=偏慢。单源超时约 7s；失败立刻下一源并退避。auto 对已知挂掉的源冷却约 3 分钟。旧行情新鲜 TTL 30 分钟，可放宽至 24 小时后再用演示数据（绝不会把演示标成最新）。日报源亦在此探测。
-              {isPagesHost() ? ` ${PAGES_QUOTE_HINT}` : ' Electron/本机可走原生 HTTP，通常比公开站更稳。'}
+              进入本页会自动探测（真实轻量请求）。「通」=可用，「挂」=失败（auto 冷却约 60s 后重试），「慢」=偏慢。
+              直连超时约 6.5s、公共中继约 3.5s；失败立刻下一源。浏览器优先同花顺（带 CORS）；Electron/安卓壳走原生 HTTP 可直连东财/新浪/Yahoo。
+              旧行情新鲜 TTL 30 分钟，可放宽至 24 小时；仍无则才用演示（绝不会把演示标成最新）。日报源亦在此探测。
+              {isPagesHost() ? ` ${PAGES_QUOTE_HINT}` : ' Electron/Capacitor 原生 HTTP 通常比公开站更稳。'}
               {' '}{HONEST_QUOTE_BOUNDARY}
             </p>
           </div>
@@ -407,7 +432,7 @@ export function SettingsPage({
                 value={settings.quoteProvider}
                 onChange={(e) => saveProvider(e.target.value as QuoteProviderMode)}
               >
-                <option value="auto">自动（东财 → 新浪 → 同花顺 → Yahoo → 旧行情 → 演示）</option>
+                <option value="auto">自动（浏览器：同花顺优先；原生：东财优先 → … → 旧行情 → 演示）</option>
                 <option value="eastmoney">东方财富优先</option>
                 <option value="ths">同花顺优先</option>
                 <option value="yahoo">Yahoo Finance 优先</option>

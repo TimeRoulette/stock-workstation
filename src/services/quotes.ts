@@ -12,8 +12,10 @@ import * as db from './db'
 import { getBriefHealth, probeBriefSources } from './briefNews'
 import {
   quoteCandidateUrls,
-  preferElectronTransport,
-  electronHttpGet,
+  preferNativeHttpTransport,
+  nativeHttpGet,
+  isPublicRelayUrl,
+  isCapacitorNative,
   setQuoteProxyUrl,
   getQuoteProxyUrl,
 } from './quoteTransport'
@@ -205,12 +207,14 @@ export const mockProvider: QuoteProvider = {
 
 /* ---------- fetch helpers: retry + timeout ---------- */
 
-/** 单次 provider 请求超时（更快失败切换） */
-const PROVIDER_TIMEOUT_MS = 7000
+/** 单次 provider 直连超时 */
+const PROVIDER_TIMEOUT_MS = 6500
+/** 公共 CORS 中继更短超时，避免拖死整链 */
+const RELAY_TIMEOUT_MS = 3500
 /** 自选批量分片，避免单次 URL/响应过大 */
 const PROVIDER_BATCH_SIZE = 20
-/** auto 模式：已知 down 源短路冷却 */
-const DOWN_COOLDOWN_MS = 3 * 60 * 1000
+/** auto 模式：已知 down 源短路冷却（过长会导致长时间只吃演示/旧行情） */
+const DOWN_COOLDOWN_MS = 60 * 1000
 
 function chunkSymbols<T>(arr: T[], size = PROVIDER_BATCH_SIZE): T[][] {
   if (arr.length === 0) return []
@@ -241,15 +245,28 @@ async function fetchWithRetry(
   init: RequestInit = {},
   opts: { retries?: number; timeoutMs?: number; label?: string } = {},
 ): Promise<Response> {
-  const retries = opts.retries ?? 1
-  const timeoutMs = opts.timeoutMs ?? PROVIDER_TIMEOUT_MS
+  const relay = isPublicRelayUrl(url)
+  const retries = opts.retries ?? (relay ? 0 : 1)
+  const timeoutMs = opts.timeoutMs ?? (relay ? RELAY_TIMEOUT_MS : PROVIDER_TIMEOUT_MS)
   let lastErr: unknown
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       let res: Response
-      // Electron：绝对 URL 优先主进程代理（无 CORS）
-      if (preferElectronTransport() && /^https?:\/\//i.test(url)) {
-        res = await electronHttpGet(url, { headers: init.headers, timeoutMs })
+      // Electron / Capacitor：绝对 URL 优先原生 HTTP（无 CORS）
+      if (preferNativeHttpTransport() && /^https?:\/\//i.test(url)) {
+        try {
+          res = await nativeHttpGet(url, { headers: init.headers, timeoutMs })
+        } catch (nativeErr) {
+          // CapacitorHttp 未注入时回退 fetch（若已 patch 仍可绕 CORS）
+          if (!isCapacitorNative()) throw nativeErr
+          const ctrl = new AbortController()
+          const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+          try {
+            res = await fetch(url, { ...init, signal: ctrl.signal })
+          } finally {
+            clearTimeout(timer)
+          }
+        }
       } else {
         const ctrl = new AbortController()
         const timer = setTimeout(() => ctrl.abort(), timeoutMs)
@@ -264,8 +281,8 @@ async function fetchWithRetry(
     } catch (e) {
       lastErr = e
       if (attempt < retries) {
-        // 失败退避：200ms、400ms…
-        await new Promise((r) => setTimeout(r, 200 * (attempt + 1)))
+        // 失败退避：150ms、300ms…
+        await new Promise((r) => setTimeout(r, 150 * (attempt + 1)))
       }
     }
   }
@@ -285,11 +302,14 @@ async function fetchFirstOk(
   opts: { retries?: number; timeoutMs?: number; label?: string } = {},
 ): Promise<Response> {
   let lastErr: unknown
-  // 每个候选 URL：默认 0 次重试（更快切换下一 URL / 下一源）；调用方可覆盖
-  const retries = opts.retries ?? 0
-  for (const url of urls) {
+  for (let i = 0; i < urls.length; i++) {
+    const url = urls[i]
+    const relay = isPublicRelayUrl(url)
+    // 直连：允许 1 次重试；中继：0 次 + 短超时，尽快切下一候选/下一源
+    const retries = opts.retries ?? (relay ? 0 : 1)
+    const timeoutMs = opts.timeoutMs ?? (relay ? RELAY_TIMEOUT_MS : PROVIDER_TIMEOUT_MS)
     try {
-      return await fetchWithRetry(url, init, { ...opts, retries })
+      return await fetchWithRetry(url, init, { ...opts, retries, timeoutMs })
     } catch (e) {
       lastErr = e
     }
@@ -548,7 +568,7 @@ async function fetchEastmoneyBatchOnce(symbols: string[]): Promise<Quote[]> {
     const res = await fetchFirstOk(
       eastmoneyUrls(path),
       { headers: providerHeaders('eastmoney') },
-      { label: '东财', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
+      { label: '东财', timeoutMs: PROVIDER_TIMEOUT_MS },
     )
     const json = await res.json()
     const diffs: Array<Record<string, unknown>> = json?.data?.diff || []
@@ -653,7 +673,7 @@ async function fetchEastmoneyCandles(symbol: string, days = 90, period: ChartPer
     const res = await fetchFirstOk(
       eastmoneyHisUrls(path),
       { headers: providerHeaders('eastmoney') },
-      { label: '东财K线', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
+      { label: '东财K线', timeoutMs: PROVIDER_TIMEOUT_MS },
     )
     const json = await res.json()
     const klines: string[] = json?.data?.klines || []
@@ -752,7 +772,7 @@ async function fetchSinaQuotesOnce(symbols: string[]): Promise<Quote[]> {
     const res = await fetchFirstOk(
       sinaUrls(list),
       { headers: providerHeaders('sina') },
-      { label: '新浪', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
+      { label: '新浪', timeoutMs: PROVIDER_TIMEOUT_MS },
     )
     const buf = await res.arrayBuffer()
     let body: string
@@ -892,7 +912,7 @@ async function fetchOneThsQuote(symbol: string): Promise<Quote> {
     const res = await fetchFirstOk(
       thsUrls(code),
       { headers: providerHeaders('ths') },
-      { label: '同花顺', retries: 0, timeoutMs: PROVIDER_TIMEOUT_MS },
+      { label: '同花顺', timeoutMs: PROVIDER_TIMEOUT_MS },
     )
     const body = await res.text()
     const items = parseThsJsonp(body)
@@ -990,6 +1010,9 @@ export class QuoteService {
     const th = thsProvider
     const yh = yahooProvider
     const mk = mockProvider
+    // Pages/浏览器：同花顺实头带 Access-Control-Allow-Origin:*，应优先于需中继的东财/新浪/Yahoo
+    // Electron/Capacitor 原生 HTTP 无 CORS，东财批量更合适仍可优先
+    const browserCors = !preferNativeHttpTransport()
     switch (this.mode) {
       case 'mock':
         return [mk]
@@ -998,10 +1021,10 @@ export class QuoteService {
       case 'ths':
         return [th, em, sn, yh, mk]
       case 'eastmoney':
-        return [em, sn, th, yh, mk]
+        return browserCors ? [em, th, sn, yh, mk] : [em, sn, th, yh, mk]
       case 'auto':
       default:
-        return [em, sn, th, yh, mk]
+        return browserCors ? [th, em, sn, yh, mk] : [em, sn, th, yh, mk]
     }
   }
 
@@ -1189,7 +1212,7 @@ export class QuoteService {
 
   async activeSourceLabel(): Promise<string> {
     const labels: Record<string, string> = {
-      auto: '自动（东财 → 新浪 → 同花顺 → Yahoo → 旧行情 → 演示）',
+      auto: '自动（浏览器：同花顺优先；原生：东财优先 → … → 旧行情 → 演示）',
       eastmoney: '东方财富优先',
       ths: '同花顺优先',
       yahoo: 'Yahoo 优先',
@@ -1256,6 +1279,16 @@ export function syncQuoteProxyFromDb() {
 }
 
 export { setQuoteProxyUrl, getQuoteProxyUrl }
+
+/** 同步窥视本地旧行情（首屏先显示，避免空窗/误显演示） */
+export function peekCachedQuotes(symbols: string[]): Quote[] {
+  const out: Quote[] = []
+  for (const s of symbols) {
+    const q = quoteFromCache(s)
+    if (q) out.push(q)
+  }
+  return out
+}
 
 export const quoteService = new QuoteService()
 

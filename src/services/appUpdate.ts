@@ -43,21 +43,6 @@ export interface UpdateCheckResult {
   source?: 'pages' | 'github-release'
 }
 
-type CapacitorBridge = {
-  isNativePlatform?: () => boolean
-  getPlatform?: () => string
-  Plugins?: {
-    App?: { getInfo?: () => Promise<{ version?: string; build?: string; name?: string }> }
-    Browser?: { open?: (opts: { url: string }) => Promise<void> }
-  }
-}
-
-declare global {
-  interface Window {
-    Capacitor?: CapacitorBridge
-  }
-}
-
 export function parseSemver(v: string): [number, number, number] {
   const clean = String(v || '')
     .trim()
